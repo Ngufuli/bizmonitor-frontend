@@ -6,7 +6,7 @@ import {
 } from "recharts";
 
 // ─── API CONFIG — change this to your Render URL after deploying ──────────────
-const API = "http://localhost:8000";
+const API = "https://bizmonitor-api.onrender.com/";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
