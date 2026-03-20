@@ -5,8 +5,9 @@ import {
   PieChart, Pie, Cell, Legend
 } from "recharts";
 
-// ─── API CONFIG — change this to your Render URL after deploying ──────────────
-const API = "https://bizmonitor-api.onrender.com/";
+// ─── API CONFIG ───────────────────────────────────────────────────────────────
+// Set VITE_API_URL in your .env.local (dev) or Vercel dashboard (production)
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -17,12 +18,25 @@ const C = {
 
 const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// ─── Auth Token Helpers ───────────────────────────────────────────────────────
+const saveToken = (token) => localStorage.setItem("biz_token", token);
+const getToken  = ()      => localStorage.getItem("biz_token");
+const clearToken = ()     => localStorage.removeItem("biz_token");
+
 // ─── API Helpers ──────────────────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {
+  const token = getToken();
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+    },
     ...options,
   });
+  if (res.status === 401) {
+    clearToken();
+    window.location.reload();
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `API error ${res.status}`);
@@ -30,10 +44,9 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-const apiGet    = (path)       => apiFetch(path);
-const apiPost   = (path, body) => apiFetch(path, { method: "POST",   body: JSON.stringify(body) });
-const apiPatch  = (path, body) => apiFetch(path, { method: "PATCH",  body: JSON.stringify(body) });
-const apiDelete = (path)       => apiFetch(path, { method: "DELETE" });
+const apiGet   = (path)       => apiFetch(path);
+const apiPost  = (path, body) => apiFetch(path, { method: "POST",  body: JSON.stringify(body) });
+const apiPatch = (path, body) => apiFetch(path, { method: "PATCH", body: JSON.stringify(body) });
 
 // ─── Data Aggregators ─────────────────────────────────────────────────────────
 const aggregateSalesByMonth = (sales) => {
@@ -130,16 +143,104 @@ const Field = ({ label, children }) => (
   </div>
 );
 
-// ── API Status Banner ─────────────────────────────────────────────────────────
 const ApiBanner = ({ status }) => {
   const cfg = {
-    ok:      { color: C.green,  icon: "●", text: `Connected to API — ${API}` },
-    error:   { color: C.red,    icon: "✕", text: `API offline — start the server at ${API}` },
+    ok:      { color: C.green,  icon: "●", text: `Connected — ${API}` },
+    error:   { color: C.red,    icon: "✕", text: `API offline — ${API}` },
     loading: { color: C.accent, icon: "◌", text: "Connecting to API…" },
   }[status];
   return (
     <div style={{ padding:"9px 16px",background:cfg.color+"10",border:`1px solid ${cfg.color}33`,borderRadius:7,fontSize:12,color:cfg.color,display:"flex",alignItems:"center",gap:8,marginBottom:20 }}>
       <span>{cfg.icon}</span>{cfg.text}
+    </div>
+  );
+};
+
+// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
+const LoginScreen = ({ onLogin }) => {
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
+
+  const handleLogin = async () => {
+    if (!email || !password) return setError("Please enter your email and password.");
+    setLoading(true);
+    setError("");
+    try {
+      // FastAPI's OAuth2 login expects form data, not JSON
+      const form = new URLSearchParams();
+      form.append("username", email);
+      form.append("password", password);
+      const res  = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Login failed");
+      saveToken(data.access_token);
+      onLogin(data.user);
+    } catch(e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ height:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'IBM Plex Sans',system-ui,sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:40,width:360 }}>
+        {/* Logo */}
+        <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:28 }}>
+          <div style={{ width:36,height:36,background:C.accent,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:700,color:"#000" }}>B</div>
+          <div>
+            <div style={{ fontWeight:700,fontSize:16,color:C.text }}>BizMonitor</div>
+            <div style={{ fontSize:10,color:C.muted,letterSpacing:1 }}>ENTERPRISE</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize:14,color:C.muted,marginBottom:24 }}>Sign in to your account</div>
+
+        {error && (
+          <div style={{ background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:6,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:16 }}>
+            {error}
+          </div>
+        )}
+
+        <Field label="Email">
+          <input
+            type="email"
+            placeholder="you@company.com"
+            value={email}
+            onChange={e=>setEmail(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+            style={inputStyle}
+          />
+        </Field>
+
+        <Field label="Password">
+          <input
+            type="password"
+            placeholder="••••••••"
+            value={password}
+            onChange={e=>setPassword(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+            style={inputStyle}
+          />
+        </Field>
+
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          style={{ width:"100%",padding:"11px",borderRadius:7,border:"none",background:C.accent,color:"#000",fontWeight:700,fontSize:14,cursor:loading?"not-allowed":"pointer",opacity:loading?0.7:1,marginTop:6,fontFamily:"'IBM Plex Sans',sans-serif" }}
+        >
+          {loading ? "Signing in…" : "Sign In"}
+        </button>
+
+        <div style={{ marginTop:20,fontSize:11,color:C.dim,textAlign:"center" }}>
+          Contact your admin to create an account
+        </div>
+      </div>
     </div>
   );
 };
@@ -232,13 +333,10 @@ const DataEntry = ({ inventory, onRefresh, apiStatus }) => {
           </div>
           <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24 }}>
             <div style={{ fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14 }}>API Endpoint</div>
-            <div style={{ background:C.surface,borderRadius:7,padding:"14px 16px",fontFamily:"'DM Mono',monospace",fontSize:12,color:C.blue,marginBottom:16 }}>
-              POST {API}/sales
-            </div>
-            <div style={{ fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10 }}>Request Body</div>
+            <div style={{ background:C.surface,borderRadius:7,padding:"14px 16px",fontFamily:"'DM Mono',monospace",fontSize:12,color:C.blue,marginBottom:16 }}>POST {API}/sales</div>
             <pre style={{ background:C.surface,borderRadius:7,padding:"14px 16px",fontSize:11,color:C.muted,margin:0,overflowX:"auto" }}>{JSON.stringify({date:"2024-12-01",product:"Widget A",amount:5000,units:50,rep:"Name",notes:"optional"},null,2)}</pre>
             <div style={{ marginTop:14,padding:"12px 14px",background:C.accentDim,borderRadius:7,fontSize:12,color:C.accent }}>
-              💡 Entries go straight to the SQLite database via FastAPI. View all at <strong>{API}/docs</strong>
+              💡 View all endpoints at <strong>{API}/docs</strong>
             </div>
           </div>
         </>)}
@@ -345,10 +443,10 @@ const Overview = ({ sales, expenses, inventory, summary }) => {
     <div>
       <SectionHeader title="Business Overview" subtitle="Live data from the database" />
       <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22 }}>
-        <KpiCard label="Total Revenue" value={fmt(summary?.total_revenue||0)} sub="All time" trend="up" color={C.green} />
-        <KpiCard label="Total Expenses" value={fmt(summary?.total_expenses||0)} sub="All time" color={C.red} />
-        <KpiCard label="Net Profit" value={fmt(summary?.net_profit||0)} sub={`Margin ${summary?.profit_margin||0}%`} trend="up" color={C.accent} />
-        <KpiCard label="Inventory Value" value={fmt(summary?.inventory_value||0)} sub="At cost" color={C.blue} />
+        <KpiCard label="Total Revenue"   value={fmt(summary?.total_revenue||0)}   sub="All time"   trend="up" color={C.green} />
+        <KpiCard label="Total Expenses"  value={fmt(summary?.total_expenses||0)}  sub="All time"              color={C.red}   />
+        <KpiCard label="Net Profit"      value={fmt(summary?.net_profit||0)}      sub={`Margin ${summary?.profit_margin||0}%`} trend="up" color={C.accent} />
+        <KpiCard label="Inventory Value" value={fmt(summary?.inventory_value||0)} sub="At cost"               color={C.blue}  />
       </div>
       <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16 }}>
         <ChartCard title="Revenue vs Expenses — Monthly" height={240}>
@@ -362,8 +460,8 @@ const Overview = ({ sales, expenses, inventory, summary }) => {
               <XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} />
               <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`} />
               <Tooltip content={<Tip />} />
-              <Area type="monotone" dataKey="revenue" stroke={C.green} fill="url(#rg)" strokeWidth={2} name="Revenue" />
-              <Area type="monotone" dataKey="expenses" stroke={C.red} fill="url(#eg)" strokeWidth={2} name="Expenses" />
+              <Area type="monotone" dataKey="revenue"  stroke={C.green} fill="url(#rg)" strokeWidth={2} name="Revenue" />
+              <Area type="monotone" dataKey="expenses" stroke={C.red}   fill="url(#eg)" strokeWidth={2} name="Expenses" />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -392,8 +490,8 @@ const Sales = ({ sales }) => {
       <SectionHeader title="Sales & Revenue" subtitle="All sales from the database" />
       <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22 }}>
         <KpiCard label="Total Revenue" value={fmt(sales.reduce((s,d)=>s+d.amount,0))} sub="All entries" trend="up" color={C.green} />
-        <KpiCard label="Total Units" value={sales.reduce((s,d)=>s+d.units,0).toLocaleString()} sub="All time" color={C.blue} />
-        <KpiCard label="Sale Entries" value={sales.length} sub="In database" color={C.accent} />
+        <KpiCard label="Total Units"   value={sales.reduce((s,d)=>s+d.units,0).toLocaleString()} sub="All time" color={C.blue} />
+        <KpiCard label="Sale Entries"  value={sales.length} sub="In database" color={C.accent} />
       </div>
       <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16 }}>
         <ChartCard title="Monthly Revenue" height={230}>
@@ -498,10 +596,10 @@ const Inventory = ({ inventory }) => (
   <div>
     <SectionHeader title="Inventory & Stock" subtitle="Live from database — updated via API" />
     <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22 }}>
-      <KpiCard label="Total SKUs" value={inventory.length} sub="Products" color={C.blue} />
-      <KpiCard label="Total Value" value={fmt(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green} />
-      <KpiCard label="Low Stock" value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down" />
-      <KpiCard label="Out of Stock" value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red} trend="down" />
+      <KpiCard label="Total SKUs"    value={inventory.length} sub="Products" color={C.blue} />
+      <KpiCard label="Total Value"   value={fmt(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green} />
+      <KpiCard label="Low Stock"     value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down" />
+      <KpiCard label="Out of Stock"  value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red}    trend="down" />
     </div>
     <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:16 }}>
       <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
@@ -528,7 +626,7 @@ const Inventory = ({ inventory }) => (
           <XAxis dataKey="name" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} />
           <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} />
           <Tooltip content={<Tip />} />
-          <Bar dataKey="stock"   fill={C.blue}   name="Stock"   radius={[3,3,0,0]} />
+          <Bar dataKey="stock"   fill={C.blue}  name="Stock"   radius={[3,3,0,0]} />
           <Bar dataKey="reorder" fill={C.accent} name="Reorder" radius={[3,3,0,0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -545,9 +643,9 @@ const ProfitLoss = ({ sales, expenses }) => {
     <div>
       <SectionHeader title="Profit & Loss" subtitle="Calculated from all database entries" />
       <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22 }}>
-        <KpiCard label="Total Revenue" value={fmt(ytdRev)} sub="All sales" trend="up" color={C.green} />
-        <KpiCard label="Total Expenses" value={fmt(ytdExp)} sub="All categories" color={C.red} />
-        <KpiCard label="Net Profit" value={fmt(ytdRev-ytdExp)} sub={`Margin ${ytdRev?((ytdRev-ytdExp)/ytdRev*100).toFixed(1):0}%`} trend="up" color={C.accent} />
+        <KpiCard label="Total Revenue"  value={fmt(ytdRev)}        sub="All sales"      trend="up" color={C.green}  />
+        <KpiCard label="Total Expenses" value={fmt(ytdExp)}        sub="All categories"            color={C.red}    />
+        <KpiCard label="Net Profit"     value={fmt(ytdRev-ytdExp)} sub={`Margin ${ytdRev?((ytdRev-ytdExp)/ytdRev*100).toFixed(1):0}%`} trend="up" color={C.accent} />
       </div>
       <ChartCard title="Monthly P&L" height={270}>
         <ResponsiveContainer>
@@ -577,13 +675,27 @@ const PAGES = [
 ];
 
 export default function BizMonitor() {
-  const [active, setActive]       = useState("overview");
-  const [sales, setSales]         = useState([]);
-  const [expenses, setExpenses]   = useState([]);
-  const [inventory, setInventory] = useState([]);
-  const [summary, setSummary]     = useState(null);
-  const [apiStatus, setApiStatus] = useState("loading");
+  const [user, setUser]             = useState(null);
+  const [active, setActive]         = useState("overview");
+  const [sales, setSales]           = useState([]);
+  const [expenses, setExpenses]     = useState([]);
+  const [inventory, setInventory]   = useState([]);
+  const [summary, setSummary]       = useState(null);
+  const [apiStatus, setApiStatus]   = useState("loading");
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // Check for existing token on first load
+  useEffect(() => {
+    const token = getToken();
+    if (token) {
+      apiGet("/auth/me")
+        .then(u => { setUser(u); setAuthChecked(true); })
+        .catch(() => { clearToken(); setAuthChecked(true); });
+    } else {
+      setAuthChecked(true);
+    }
+  }, []);
 
   const loadAll = useCallback(async () => {
     try {
@@ -604,12 +716,29 @@ export default function BizMonitor() {
     }
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
-
   useEffect(() => {
-    const t = setInterval(loadAll, 30000);
-    return () => clearInterval(t);
-  }, [loadAll]);
+    if (user) {
+      loadAll();
+      const t = setInterval(loadAll, 30000);
+      return () => clearInterval(t);
+    }
+  }, [user, loadAll]);
+
+  const handleLogout = () => {
+    clearToken();
+    setUser(null);
+    setSales([]);
+    setExpenses([]);
+    setInventory([]);
+    setSummary(null);
+    setApiStatus("loading");
+  };
+
+  // Show nothing while checking auth (avoids flash of login screen)
+  if (!authChecked) return null;
+
+  // Show login if not authenticated
+  if (!user) return <LoginScreen onLogin={setUser} />;
 
   const pageMap = {
     overview:  <Overview  sales={sales} expenses={expenses} inventory={inventory} summary={summary} />,
@@ -652,16 +781,24 @@ export default function BizMonitor() {
           ))}
         </nav>
 
+        {/* User info + logout */}
         <div style={{ padding:"14px 20px",borderTop:`1px solid ${C.border}`,fontSize:11 }}>
-          <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4 }}>
+          <div style={{ color:C.text,fontWeight:600,marginBottom:2 }}>{user.full_name}</div>
+          <div style={{ color:C.muted,marginBottom:8,textTransform:"capitalize" }}>{user.role}</div>
+          <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:6 }}>
             <span style={{ color:apiStatus==="ok"?C.green:apiStatus==="error"?C.red:C.accent,fontSize:10 }}>●</span>
             <span style={{ color:apiStatus==="ok"?C.green:apiStatus==="error"?C.red:C.accent }}>
               {apiStatus==="ok"?"API Connected":apiStatus==="error"?"API Offline":"Connecting…"}
             </span>
           </div>
-          <button onClick={loadAll} style={{ fontSize:11,color:C.muted,background:"transparent",border:"none",cursor:"pointer",padding:0,fontFamily:"'IBM Plex Sans',sans-serif" }}>
-            ↻ {lastRefresh?`Last synced ${lastRefresh.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`:"Refresh"}
-          </button>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <button onClick={loadAll} style={{ fontSize:11,color:C.muted,background:"transparent",border:"none",cursor:"pointer",padding:0,fontFamily:"'IBM Plex Sans',sans-serif" }}>
+              ↻ {lastRefresh?lastRefresh.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"Refresh"}
+            </button>
+            <button onClick={handleLogout} style={{ fontSize:11,color:C.red,background:"transparent",border:"none",cursor:"pointer",padding:0,fontFamily:"'IBM Plex Sans',sans-serif" }}>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
 
