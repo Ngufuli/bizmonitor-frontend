@@ -84,6 +84,25 @@ const iStyle  = {width:"100%",background:C.surface,border:`1px solid ${C.border}
 const Field   = ({label,children}) => <div style={{marginBottom:14}}><label style={{fontSize:11,color:C.muted,letterSpacing:1,textTransform:"uppercase",marginBottom:5,display:"block"}}>{label}</label>{children}</div>;
 const Btn     = ({onClick,color=C.accent,textColor="#000",children,disabled,style={}}) => <button onClick={onClick} disabled={disabled} style={{padding:"9px 18px",borderRadius:6,border:"none",background:disabled?C.dim:color,color:disabled?C.muted:textColor,fontWeight:600,fontSize:13,cursor:disabled?"not-allowed":"pointer",fontFamily:"'IBM Plex Sans',sans-serif",...style}}>{children}</button>;
 
+// ── Confirm Delete Dialog ─────────────────────────────────────────────────────
+const ConfirmDelete = ({message, onConfirm, onCancel}) => (
+  <div style={{position:"fixed",inset:0,background:"#000a",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+    <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:10,padding:28,width:360,boxShadow:`0 8px 40px ${C.red}33`}}>
+      <div style={{fontSize:18,marginBottom:10}}>⚠️</div>
+      <div style={{fontWeight:700,color:C.text,fontSize:15,marginBottom:8}}>Confirm Delete</div>
+      <div style={{color:C.muted,fontSize:13,marginBottom:22,lineHeight:1.6}}>{message}</div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onConfirm} style={{flex:1,padding:"10px",borderRadius:6,border:"none",background:C.red,color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>Yes, Delete</button>
+        <button onClick={onCancel}  style={{flex:1,padding:"10px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button>
+      </div>
+    </div>
+  </div>
+);
+
+const DelBtn = ({onClick}) => (
+  <button onClick={onClick} style={{padding:"3px 8px",borderRadius:4,border:`1px solid ${C.red}33`,background:C.red+"11",color:C.red,fontSize:11,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:600}}>✕</button>
+);
+
 // ── Login ─────────────────────────────────────────────────────────────────────
 const LoginScreen = ({onLogin}) => {
   const [email,setEmail]=useState(""); const [pw,setPw]=useState(""); const [err,setErr]=useState(""); const [loading,setLoading]=useState(false);
@@ -198,6 +217,7 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
+      {confirmBiz&&<ConfirmDelete message={`Deactivate "${confirmBiz.name}"? It will be hidden from all users. Data is preserved.`} onConfirm={()=>deleteBusiness(confirmBiz.id)} onCancel={()=>setConfirmBiz(null)}/>}
       <SectionHeader title="Admin Panel" subtitle="Manage users, businesses, and view system activity"/>
 
       <div style={{display:"flex",gap:8,marginBottom:24}}>
@@ -291,9 +311,12 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
             <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>All Businesses ({businesses.length})</div>
             <div style={{display:"grid",gap:10}}>
               {businesses.map(b=>(
-                <div key={b.id} style={{background:C.surface,borderRadius:8,padding:"14px 16px"}}>
-                  <div style={{fontWeight:600,color:C.text,fontSize:14}}>{b.name}</div>
-                  <div style={{fontSize:12,color:C.muted,marginTop:3}}>{b.industry||"General"} · {b.currency} · ID: {b.id}</div>
+                <div key={b.id} style={{background:C.surface,borderRadius:8,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontWeight:600,color:C.text,fontSize:14}}>{b.name}</div>
+                    <div style={{fontSize:12,color:C.muted,marginTop:3}}>{b.industry||"General"} · {b.currency} · ID: {b.id}</div>
+                  </div>
+                  <DelBtn onClick={()=>setConfirmBiz(b)}/>
                 </div>
               ))}
             </div>
@@ -330,95 +353,377 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
 };
 
 // ── Data Entry ────────────────────────────────────────────────────────────────
-const DataEntry = ({inventory,onRefresh,bizId,apiStatus}) => {
-  const [tab,setTab]=useState("sale"); const [toast,setToast]=useState(null); const [loading,setLoading]=useState(false);
-  const [sale,setSale]=useState({date:todayStr(),product:"",amount:"",units:"",rep:"",notes:""});
-  const [expense,setExpense]=useState({date:todayStr(),category:"Operations",amount:"",vendor:"",description:"",submitted_by:""});
-  const [stock,setStock]=useState({sku:"",qty:"",movement_type:"add",reason:"",received_by:""});
-  const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
-  const ok = apiStatus==="ok";
+const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
+  const [tab, setTab]         = useState("sale");
+  const [toast, setToast]     = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const submitSale=async()=>{
-    if(!sale.product||!sale.amount||!sale.units) return showToast("✕ Fill required fields",C.red);
+  // Sale — unit price + units → auto-total
+  const [sale, setSale] = useState({
+    date: todayStr(), product: "", unit_price: "", units: "", rep: "", notes: ""
+  });
+
+  // Expense
+  const [expense, setExpense] = useState({
+    date: todayStr(), category: "Operations", amount: "", vendor: "", description: "", submitted_by: ""
+  });
+
+  // Stock movement
+  const [stock, setStock] = useState({
+    sku: "", qty: "", movement_type: "add", reason: "", received_by: ""
+  });
+
+  // Add new product
+  const [product, setProduct] = useState({
+    sku: "", name: "", stock: "", reorder: "", unit_cost: ""
+  });
+
+  const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
+  const ok = apiStatus === "ok";
+
+  // Auto-calculate sale total
+  const saleTotal = sale.unit_price && sale.units
+    ? Number(sale.unit_price) * Number(sale.units)
+    : null;
+
+  const submitSale = async () => {
+    if (!sale.product || !sale.unit_price || !sale.units)
+      return showToast("✕ Fill in product, unit price and units", C.red);
+    if (Number(sale.unit_price) <= 0 || Number(sale.units) <= 0)
+      return showToast("✕ Price and units must be greater than zero", C.red);
     setLoading(true);
-    try{await apiPost(`/businesses/${bizId}/sales`,{...sale,amount:Number(sale.amount),units:Number(sale.units)});setSale({date:todayStr(),product:"",amount:"",units:"",rep:"",notes:""});showToast("✓ Sale saved");onRefresh();}
-    catch(e){showToast(`✕ ${e.message}`,C.red);}
+    try {
+      await apiPost(`/businesses/${bizId}/sales`, {
+        date: sale.date, product: sale.product,
+        amount: saleTotal,           // total = price × units
+        units: Number(sale.units),
+        rep: sale.rep, notes: sale.notes,
+      });
+      setSale({ date: todayStr(), product: "", unit_price: "", units: "", rep: "", notes: "" });
+      showToast("✓ Sale saved");
+      onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
   };
-  const submitExpense=async()=>{
-    if(!expense.amount||!expense.vendor||!expense.description) return showToast("✕ Fill required fields",C.red);
+
+  const submitExpense = async () => {
+    if (!expense.amount || !expense.vendor || !expense.description)
+      return showToast("✕ Fill required fields", C.red);
     setLoading(true);
-    try{await apiPost(`/businesses/${bizId}/expenses`,{...expense,amount:Number(expense.amount)});setExpense({date:todayStr(),category:"Operations",amount:"",vendor:"",description:"",submitted_by:""});showToast("✓ Expense saved");onRefresh();}
-    catch(e){showToast(`✕ ${e.message}`,C.red);}
+    try {
+      await apiPost(`/businesses/${bizId}/expenses`, { ...expense, amount: Number(expense.amount) });
+      setExpense({ date: todayStr(), category: "Operations", amount: "", vendor: "", description: "", submitted_by: "" });
+      showToast("✓ Expense saved");
+      onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
   };
-  const submitStock=async()=>{
-    if(!stock.sku||!stock.qty) return showToast("✕ Fill required fields",C.red);
+
+  const submitStock = async () => {
+    if (!stock.sku || !stock.qty) return showToast("✕ Fill required fields", C.red);
     setLoading(true);
-    try{await apiPatch(`/businesses/${bizId}/inventory/${stock.sku}/stock`,{movement_type:stock.movement_type,qty:Number(stock.qty),reason:stock.reason,received_by:stock.received_by});setStock({sku:"",qty:"",movement_type:"add",reason:"",received_by:""});showToast("✓ Stock updated");onRefresh();}
-    catch(e){showToast(`✕ ${e.message}`,C.red);}
+    try {
+      await apiPatch(`/businesses/${bizId}/inventory/${stock.sku}/stock`, {
+        movement_type: stock.movement_type, qty: Number(stock.qty),
+        reason: stock.reason, received_by: stock.received_by
+      });
+      setStock({ sku: "", qty: "", movement_type: "add", reason: "", received_by: "" });
+      showToast("✓ Stock updated");
+      onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
   };
-  const sel=inventory.find(i=>i.sku===stock.sku);
-  const prev=sel&&stock.qty?Math.max(0,sel.stock+(stock.movement_type==="remove"?-Number(stock.qty):Number(stock.qty))):null;
+
+  const submitProduct = async () => {
+    if (!product.sku || !product.name) return showToast("✕ SKU and name are required", C.red);
+    setLoading(true);
+    try {
+      await apiPost(`/businesses/${bizId}/inventory`, {
+        sku:       product.sku.toUpperCase(),
+        name:      product.name,
+        stock:     Number(product.stock)     || 0,
+        reorder:   Number(product.reorder)   || 50,
+        unit_cost: Number(product.unit_cost) || 0,
+      });
+      setProduct({ sku: "", name: "", stock: "", reorder: "", unit_cost: "" });
+      showToast("✓ Product added to inventory");
+      onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setLoading(false);
+  };
+
+  const sel  = inventory.find(i => i.sku === stock.sku);
+  const prev = sel && stock.qty
+    ? Math.max(0, sel.stock + (stock.movement_type === "remove" ? -Number(stock.qty) : Number(stock.qty)))
+    : null;
+
+  const TABS = [
+    ["sale",    "↑ Log Sale",       C.green],
+    ["expense", "↓ Record Expense", C.red],
+    ["stock",   "▣ Update Stock",   C.blue],
+    ["product", "＋ Add Product",    C.purple],
+  ];
 
   return (
     <div>
-      {toast&&<Toast msg={toast.msg} color={toast.color}/>}
-      <SectionHeader title="Data Entry" subtitle="Log sales, expenses and stock movements"/>
-      <div style={{display:"flex",gap:8,marginBottom:24}}>
-        {[["sale","↑ Log Sale",C.green],["expense","↓ Record Expense",C.red],["stock","▣ Update Stock",C.blue]].map(([id,label,color])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{padding:"10px 20px",borderRadius:7,border:`1px solid ${tab===id?color:C.border}`,background:tab===id?color+"18":"transparent",color:tab===id?color:C.muted,fontWeight:tab===id?700:400,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>{label}</button>
+      {toast && <Toast msg={toast.msg} color={toast.color}/>}
+      <SectionHeader title="Data Entry" subtitle="Log sales, expenses, stock movements and add new products"/>
+
+      {/* Tab bar */}
+      <div style={{display:"flex",gap:8,marginBottom:24,flexWrap:"wrap"}}>
+        {TABS.map(([id,label,color])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            padding:"10px 18px",borderRadius:7,
+            border:`1px solid ${tab===id?color:C.border}`,
+            background:tab===id?color+"18":"transparent",
+            color:tab===id?color:C.muted,
+            fontWeight:tab===id?700:400,fontSize:13,cursor:"pointer",
+            fontFamily:"'IBM Plex Sans',sans-serif"
+          }}>{label}</button>
         ))}
       </div>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-        {tab==="sale"&&<>
+
+        {/* ── SALE FORM ── */}
+        {tab==="sale" && <>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.green,marginBottom:20}}><span style={{background:C.green+"18",padding:"4px 12px",borderRadius:6}}>↑ New Sale</span></div>
-            <Field label="Date *"><input type="date" style={iStyle} value={sale.date} onChange={e=>setSale({...sale,date:e.target.value})}/></Field>
-            <Field label="Product *"><input type="text" style={iStyle} placeholder="Product name" value={sale.product} onChange={e=>setSale({...sale,product:e.target.value})}/></Field>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Amount ($) *"><input type="number" style={iStyle} placeholder="0.00" value={sale.amount} onChange={e=>setSale({...sale,amount:e.target.value})}/></Field>
-              <Field label="Units *"><input type="number" style={iStyle} placeholder="0" value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/></Field>
+            <div style={{fontSize:13,fontWeight:700,color:C.green,marginBottom:20}}>
+              <span style={{background:C.green+"18",padding:"4px 12px",borderRadius:6}}>↑ New Sale Entry</span>
             </div>
-            <Field label="Notes"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/></Field>
-            <button onClick={submitSale} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.green:C.dim,color:"#000",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed"}}>{loading?"Saving…":"💾 Submit Sale"}</button>
+            <Field label="Date *">
+              <input type="date" style={iStyle} value={sale.date} onChange={e=>setSale({...sale,date:e.target.value})}/>
+            </Field>
+            <Field label="Product / Service *">
+              <input type="text" style={iStyle} placeholder="e.g. Reasdun Tshirt" value={sale.product} onChange={e=>setSale({...sale,product:e.target.value})}/>
+            </Field>
+
+            {/* Price × Units = Total */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Unit Price *">
+                <input type="number" style={iStyle} placeholder="Price per unit" value={sale.unit_price} onChange={e=>setSale({...sale,unit_price:e.target.value})}/>
+              </Field>
+              <Field label="Units Sold *">
+                <input type="number" style={iStyle} placeholder="Qty" value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/>
+              </Field>
+            </div>
+
+            {/* Live total preview */}
+            {saleTotal !== null && (
+              <div style={{
+                background: C.green+"12", border:`1px solid ${C.green}44`,
+                borderRadius:7, padding:"12px 16px", marginBottom:14,
+                display:"flex", justifyContent:"space-between", alignItems:"center"
+              }}>
+                <div style={{fontSize:12,color:C.muted}}>
+                  {fmtFull(Number(sale.unit_price))} × {sale.units} units
+                </div>
+                <div style={{fontSize:18,fontWeight:700,color:C.green,fontFamily:"'DM Mono',monospace"}}>
+                  = {fmtFull(saleTotal)}
+                </div>
+              </div>
+            )}
+
+            <Field label="Sales Rep">
+              <input type="text" style={iStyle} placeholder="Staff name (optional)" value={sale.rep} onChange={e=>setSale({...sale,rep:e.target.value})}/>
+            </Field>
+            <Field label="Notes">
+              <textarea style={{...iStyle,resize:"vertical",minHeight:52}} placeholder="Optional notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+            </Field>
+            <button onClick={submitSale} disabled={loading||!ok} style={{
+              width:"100%",padding:"11px",borderRadius:7,border:"none",
+              background:ok?C.green:C.dim,color:"#000",fontWeight:700,fontSize:14,
+              cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1
+            }}>{loading?"Saving…":"💾 Submit Sale"}</button>
           </div>
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24,fontSize:12,color:C.muted}}>
-            <div style={{marginBottom:12,fontSize:11,letterSpacing:1.5,textTransform:"uppercase",color:C.muted}}>Tips</div>
-            <div style={{lineHeight:1.8}}>• All sales are scoped to this business only<br/>• Date affects which month's chart the sale appears in<br/>• Managers can see all team entries<br/>• Employees see only their own submissions</div>
+
+          {/* Right panel — tips */}
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>How It Works</div>
+            <div style={{display:"grid",gap:12}}>
+              {[
+                ["Unit Price","Enter the selling price of one item — e.g. 5000"],
+                ["Units","How many were sold — e.g. 3"],
+                ["Total","Auto-calculated: 5000 × 3 = 15,000. This is what gets recorded as revenue."],
+                ["Rep","Which staff member made the sale (optional)"],
+                ["Date","The date the sale happened — affects monthly charts"],
+              ].map(([title,desc])=>(
+                <div key={title} style={{padding:"10px 14px",background:C.surface,borderRadius:7}}>
+                  <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:3}}>{title}</div>
+                  <div style={{fontSize:12,color:C.muted}}>{desc}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </>}
-        {tab==="expense"&&<>
+
+        {/* ── EXPENSE FORM ── */}
+        {tab==="expense" && <>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:20}}><span style={{background:C.red+"18",padding:"4px 12px",borderRadius:6}}>↓ New Expense</span></div>
+            <div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:20}}>
+              <span style={{background:C.red+"18",padding:"4px 12px",borderRadius:6}}>↓ New Expense</span>
+            </div>
             <Field label="Date *"><input type="date" style={iStyle} value={expense.date} onChange={e=>setExpense({...expense,date:e.target.value})}/></Field>
-            <Field label="Category *"><select style={iStyle} value={expense.category} onChange={e=>setExpense({...expense,category:e.target.value})}>{["Operations","Marketing","Payroll","Travel","Utilities","Office Supplies","Software","Other"].map(c=><option key={c}>{c}</option>)}</select></Field>
-            <Field label="Amount ($) *"><input type="number" style={iStyle} placeholder="0.00" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/></Field>
-            <Field label="Vendor *"><input type="text" style={iStyle} value={expense.vendor} onChange={e=>setExpense({...expense,vendor:e.target.value})}/></Field>
-            <Field label="Description *"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/></Field>
-            <button onClick={submitExpense} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.red:C.dim,color:"#fff",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed"}}>{loading?"Saving…":"💾 Submit Expense"}</button>
+            <Field label="Category *">
+              <select style={iStyle} value={expense.category} onChange={e=>setExpense({...expense,category:e.target.value})}>
+                {["Operations","Marketing","Payroll","Travel","Utilities","Office Supplies","Software","Other"].map(c=><option key={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="Amount *"><input type="number" style={iStyle} placeholder="0.00" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/></Field>
+            <Field label="Vendor / Supplier *"><input type="text" style={iStyle} placeholder="Who was paid?" value={expense.vendor} onChange={e=>setExpense({...expense,vendor:e.target.value})}/></Field>
+            <Field label="Description *"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} placeholder="What was this expense for?" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/></Field>
+            <Field label="Submitted By"><input type="text" style={iStyle} placeholder="Staff name (optional)" value={expense.submitted_by} onChange={e=>setExpense({...expense,submitted_by:e.target.value})}/></Field>
+            <button onClick={submitExpense} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.red:C.dim,color:"#fff",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>{loading?"Saving…":"💾 Submit Expense"}</button>
           </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24,fontSize:12,color:C.muted}}>
             <div style={{marginBottom:12,fontSize:11,letterSpacing:1.5,textTransform:"uppercase"}}>Category Guide</div>
-            {[["Operations","Day-to-day running costs"],["Marketing","Ads, campaigns, promotions"],["Payroll","Salaries and wages"],["Travel","Transport and accommodation"],["Utilities","Power, water, internet"],["Software","Subscriptions and tools"]].map(([c,d])=><div key={c} style={{marginBottom:8}}><span style={{color:C.text,fontWeight:600}}>{c}</span> — {d}</div>)}
+            {[["Operations","Day-to-day running costs"],["Marketing","Ads, campaigns, promotions"],["Payroll","Salaries and wages"],["Travel","Transport and accommodation"],["Utilities","Power, water, internet"],["Software","Subscriptions and tools"],["Office Supplies","Stationery, equipment"],["Other","Anything else"]].map(([c,d])=>(
+              <div key={c} style={{marginBottom:8,padding:"6px 10px",background:C.surface,borderRadius:5}}>
+                <span style={{color:C.text,fontWeight:600}}>{c}</span><span style={{color:C.dim}}> — {d}</span>
+              </div>
+            ))}
           </div>
         </>}
-        {tab==="stock"&&<>
+
+        {/* ── STOCK MOVEMENT ── */}
+        {tab==="stock" && <>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:20}}><span style={{background:C.blue+"18",padding:"4px 12px",borderRadius:6}}>▣ Stock Movement</span></div>
-            <Field label="Product *"><select style={iStyle} value={stock.sku} onChange={e=>setStock({...stock,sku:e.target.value})}><option value="">— Select —</option>{inventory.map(i=><option key={i.sku} value={i.sku}>{i.sku} — {i.name} ({i.stock})</option>)}</select></Field>
-            <Field label="Type *"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{[["add","Received",C.green],["remove","Dispatched",C.red],["adjust","Adjust",C.accent]].map(([v,l,c])=><button key={v} onClick={()=>setStock({...stock,movement_type:v})} style={{padding:"9px",borderRadius:6,border:`1px solid ${stock.movement_type===v?c:C.border}`,background:stock.movement_type===v?c+"22":"transparent",color:stock.movement_type===v?c:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>{l}</button>)}</div></Field>
-            <Field label="Quantity *"><input type="number" style={iStyle} value={stock.qty} onChange={e=>setStock({...stock,qty:e.target.value})}/></Field>
-            <Field label="Reason"><input type="text" style={iStyle} placeholder="e.g. PO-045" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
-            {sel&&stock.qty&&prev!==null&&<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12,display:"flex",justifyContent:"space-between"}}><span style={{color:C.text}}>{sel.name}</span><span style={{fontFamily:"'DM Mono',monospace"}}><span style={{color:C.muted}}>{sel.stock}</span><span style={{color:C.accent}}> → </span><span style={{color:prev===0?C.red:prev<sel.reorder?C.accent:C.green}}>{prev}</span></span></div>}
-            <button onClick={submitStock} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.blue:C.dim,color:"#000",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed"}}>{loading?"Saving…":"💾 Update Stock"}</button>
+            <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:20}}>
+              <span style={{background:C.blue+"18",padding:"4px 12px",borderRadius:6}}>▣ Stock Movement</span>
+            </div>
+            <Field label="Product *">
+              <select style={iStyle} value={stock.sku} onChange={e=>setStock({...stock,sku:e.target.value})}>
+                <option value="">— Select product —</option>
+                {inventory.map(i=><option key={i.sku} value={i.sku}>{i.sku} — {i.name} (stock: {i.stock})</option>)}
+              </select>
+            </Field>
+            <Field label="Movement Type *">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[["add","Received",C.green],["remove","Dispatched",C.red],["adjust","Adjust",C.accent]].map(([v,l,c])=>(
+                  <button key={v} onClick={()=>setStock({...stock,movement_type:v})} style={{padding:"9px",borderRadius:6,border:`1px solid ${stock.movement_type===v?c:C.border}`,background:stock.movement_type===v?c+"22":"transparent",color:stock.movement_type===v?c:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>{l}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Quantity *"><input type="number" style={iStyle} placeholder="How many?" value={stock.qty} onChange={e=>setStock({...stock,qty:e.target.value})}/></Field>
+            <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045, damaged" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
+            {sel && stock.qty && prev !== null && (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{color:C.muted}}>Preview: {sel.name}</span>
+                <span style={{fontFamily:"'DM Mono',monospace"}}>
+                  <span style={{color:C.muted}}>{sel.stock}</span>
+                  <span style={{color:C.accent}}> → </span>
+                  <span style={{color:prev===0?C.red:prev<sel.reorder?C.accent:C.green,fontWeight:700}}>{prev}</span>
+                </span>
+              </div>
+            )}
+            <button onClick={submitStock} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.blue:C.dim,color:"#000",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>{loading?"Saving…":"💾 Update Stock"}</button>
           </div>
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Current Stock</div>
-            <div style={{display:"grid",gap:8}}>{inventory.map(item=><div key={item.sku} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:6,border:`1px solid ${item.sku===stock.sku?C.blue:C.border}`}}><div><div style={{fontSize:12,color:C.text}}>{item.name}</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{item.sku}</div></div><div style={{textAlign:"right"}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:15,color:item.status==="out"?C.red:item.status==="low"?C.accent:C.text}}>{item.stock.toLocaleString()}</div><Badge status={item.status}/></div></div>)}</div>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Current Stock Levels</div>
+            {inventory.length === 0
+              ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet. Add one using the <strong style={{color:C.purple}}>＋ Add Product</strong> tab.</div>
+              : <div style={{display:"grid",gap:8,maxHeight:420,overflowY:"auto"}}>
+                  {inventory.map(item=>(
+                    <div key={item.sku} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:6,border:`1px solid ${item.sku===stock.sku?C.blue:C.border}`}}>
+                      <div>
+                        <div style={{fontSize:12,color:C.text,fontWeight:600}}>{item.name}</div>
+                        <div style={{fontSize:10,color:C.muted,marginTop:2}}>{item.sku} · reorder at {item.reorder}</div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:16,color:item.status==="out"?C.red:item.status==="low"?C.accent:C.text}}>{item.stock.toLocaleString()}</div>
+                        <Badge status={item.status}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+            }
           </div>
         </>}
+
+        {/* ── ADD NEW PRODUCT ── */}
+        {tab==="product" && <>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.purple,marginBottom:20}}>
+              <span style={{background:C.purple+"18",padding:"4px 12px",borderRadius:6}}>＋ Add New Product</span>
+            </div>
+            <Field label="SKU (Stock Keeping Unit) *">
+              <input type="text" style={iStyle} placeholder="e.g. SHIRT-RED-L" value={product.sku} onChange={e=>setProduct({...product,sku:e.target.value.toUpperCase()})}/>
+            </Field>
+            <Field label="Product Name *">
+              <input type="text" style={iStyle} placeholder="e.g. Reasdun Tshirt Red Large" value={product.name} onChange={e=>setProduct({...product,name:e.target.value})}/>
+            </Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Initial Stock">
+                <input type="number" style={iStyle} placeholder="0" value={product.stock} onChange={e=>setProduct({...product,stock:e.target.value})}/>
+              </Field>
+              <Field label="Reorder Point">
+                <input type="number" style={iStyle} placeholder="50" value={product.reorder} onChange={e=>setProduct({...product,reorder:e.target.value})}/>
+              </Field>
+            </div>
+            <Field label="Unit Cost (what you paid per unit)">
+              <input type="number" style={iStyle} placeholder="0.00" value={product.unit_cost} onChange={e=>setProduct({...product,unit_cost:e.target.value})}/>
+            </Field>
+
+            {/* Preview */}
+            {product.sku && product.name && (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12}}>
+                <div style={{color:C.muted,marginBottom:8,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>Preview</div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{color:C.muted}}>SKU</span><span style={{color:C.purple,fontFamily:"'DM Mono',monospace"}}>{product.sku}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{color:C.muted}}>Name</span><span style={{color:C.text}}>{product.name}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{color:C.muted}}>Opening stock</span><span style={{color:C.text}}>{product.stock||0}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{color:C.muted}}>Reorder at</span><span style={{color:C.accent}}>{product.reorder||50}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{color:C.muted}}>Unit cost</span>
+                  <span style={{color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(Number(product.unit_cost)||0)}</span>
+                </div>
+              </div>
+            )}
+
+            <button onClick={submitProduct} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.purple:C.dim,color:"#fff",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>
+              {loading?"Adding…":"＋ Add to Inventory"}
+            </button>
+          </div>
+
+          {/* Right — existing products */}
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+              Existing Products ({inventory.length})
+            </div>
+            {inventory.length === 0
+              ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet. Add your first one!</div>
+              : <div style={{display:"grid",gap:8,maxHeight:480,overflowY:"auto"}}>
+                  {inventory.map(item=>(
+                    <div key={item.sku} style={{background:C.surface,borderRadius:7,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:C.text}}>{item.name}</div>
+                          <div style={{fontSize:10,color:C.muted,marginTop:2,fontFamily:"'DM Mono',monospace"}}>{item.sku}</div>
+                        </div>
+                        <Badge status={item.status}/>
+                      </div>
+                      <div style={{display:"flex",gap:16,marginTop:8,fontSize:11,color:C.muted}}>
+                        <span>Stock: <strong style={{color:C.text}}>{item.stock}</strong></span>
+                        <span>Reorder: <strong style={{color:C.accent}}>{item.reorder}</strong></span>
+                        <span>Cost: <strong style={{color:C.green}}>{fmtFull(item.unit_cost)}</strong></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+            }
+            <div style={{marginTop:14,padding:"10px 14px",background:C.accentDim,borderRadius:7,fontSize:12,color:C.accent}}>
+              💡 To update stock levels for an existing product, use the <strong>▣ Update Stock</strong> tab.
+            </div>
+          </div>
+        </>}
+
       </div>
     </div>
   );
@@ -472,10 +777,25 @@ const Overview = ({sales,expenses,inventory,summary}) => {
   );
 };
 
-const Sales = ({sales}) => {
+const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const sd=aggregateSalesByMonth(sales);
+  const [confirm, setConfirm] = useState(null);
+  const [toast, setToast]     = useState(null);
+  const showToast = (msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
+  const canDelete = userRole==="manager"||userRole==="admin";
+
+  const doDelete = async (id) => {
+    try {
+      await apiDelete(`/businesses/${bizId}/sales/${id}`);
+      showToast("✓ Sale deleted"); onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setConfirm(null);
+  };
+
   return (
     <div>
+      {toast&&<Toast msg={toast.msg} color={toast.color}/>}
+      {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}? This cannot be undone.`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22}}>
         <KpiCard label="Total Revenue" value={fmt(sales.reduce((s,d)=>s+d.amount,0))} sub="All entries" trend="up" color={C.green}/>
@@ -487,10 +807,25 @@ const Sales = ({sales}) => {
         <ChartCard title="Units Sold" height={230}><ResponsiveContainer><LineChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Line type="monotone" dataKey="units" stroke={C.accent} strokeWidth={2} dot={{fill:C.accent,r:3}} name="Units"/></LineChart></ResponsiveContainer></ChartCard>
       </div>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-        <div style={{maxHeight:300,overflowY:"auto"}}>
+        {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Managers and admins can delete entries using the ✕ button</div>}
+        <div style={{maxHeight:340,overflowY:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead style={{position:"sticky",top:0,background:C.surface}}><tr>{["Date","Product","Amount","Units","Rep","Notes"].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-            <tbody>{sales.map(s=><tr key={s.id} style={{borderTop:`1px solid ${C.border}`}}><td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(s.date)}</td><td style={{padding:"10px 16px",color:C.text}}>{s.product}</td><td style={{padding:"10px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(s.amount)}</td><td style={{padding:"10px 16px",color:C.text}}>{s.units}</td><td style={{padding:"10px 16px",color:C.muted}}>{s.rep||"—"}</td><td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{s.notes||"—"}</td></tr>)}</tbody>
+            <thead style={{position:"sticky",top:0,background:C.surface}}>
+              <tr>{["Date","Product","Amount","Units","Rep","Notes",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {sales.map(s=>(
+                <tr key={s.id} style={{borderTop:`1px solid ${C.border}`}}>
+                  <td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(s.date)}</td>
+                  <td style={{padding:"10px 16px",color:C.text}}>{s.product}</td>
+                  <td style={{padding:"10px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(s.amount)}</td>
+                  <td style={{padding:"10px 16px",color:C.text}}>{s.units}</td>
+                  <td style={{padding:"10px 16px",color:C.muted}}>{s.rep||"—"}</td>
+                  <td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{s.notes||"—"}</td>
+                  {canDelete&&<td style={{padding:"10px 16px"}}><DelBtn onClick={()=>setConfirm(s)}/></td>}
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       </div>
@@ -498,21 +833,51 @@ const Sales = ({sales}) => {
   );
 };
 
-const Expenses = ({expenses}) => {
+const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
   const ed=aggregateExpensesByMonth(expenses);
   const catTotal=cat=>expenses.filter(e=>(["Operations","Marketing","Payroll"].includes(e.category)?e.category:"Other")===cat).reduce((s,e)=>s+e.amount,0);
+  const [confirm, setConfirm] = useState(null);
+  const [toast, setToast]     = useState(null);
+  const showToast = (msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
+  const canDelete = userRole==="manager"||userRole==="admin";
+
+  const doDelete = async (id) => {
+    try {
+      await apiDelete(`/businesses/${bizId}/expenses/${id}`);
+      showToast("✓ Expense deleted"); onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setConfirm(null);
+  };
+
   return (
     <div>
+      {toast&&<Toast msg={toast.msg} color={toast.color}/>}
+      {confirm&&<ConfirmDelete message={`Delete expense: "${confirm.description}" — ${fmtFull(confirm.amount)}? This cannot be undone.`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Expenses"/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
         {[["Operations",C.blue],["Marketing",C.purple],["Payroll",C.accent],["Other",C.muted]].map(([cat,color])=><KpiCard key={cat} label={cat} value={fmt(catTotal(cat))} sub="Total" color={color}/>)}
       </div>
       <ChartCard title="Monthly Breakdown" height={260}><ResponsiveContainer><BarChart data={ed}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/><Tooltip content={<Tip/>}/><Bar dataKey="Payroll" stackId="a" fill={C.accent} name="Payroll"/><Bar dataKey="Operations" stackId="a" fill={C.blue} name="Operations"/><Bar dataKey="Marketing" stackId="a" fill={C.purple} name="Marketing"/><Bar dataKey="Other" stackId="a" fill={C.dim} name="Other" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
       <div style={{marginTop:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-        <div style={{maxHeight:280,overflowY:"auto"}}>
+        {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Managers and admins can delete entries using the ✕ button</div>}
+        <div style={{maxHeight:300,overflowY:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead style={{position:"sticky",top:0,background:C.surface}}><tr>{["Date","Category","Amount","Vendor","Description","By"].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-            <tbody>{expenses.map(e=><tr key={e.id} style={{borderTop:`1px solid ${C.border}`}}><td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(e.date)}</td><td style={{padding:"10px 16px"}}><span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:C.blue+"22",color:C.blue}}>{e.category}</span></td><td style={{padding:"10px 16px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(e.amount)}</td><td style={{padding:"10px 16px",color:C.text}}>{e.vendor}</td><td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{e.description}</td><td style={{padding:"10px 16px",color:C.muted}}>{e.submitted_by||"—"}</td></tr>)}</tbody>
+            <thead style={{position:"sticky",top:0,background:C.surface}}>
+              <tr>{["Date","Category","Amount","Vendor","Description","By",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {expenses.map(e=>(
+                <tr key={e.id} style={{borderTop:`1px solid ${C.border}`}}>
+                  <td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(e.date)}</td>
+                  <td style={{padding:"10px 16px"}}><span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:C.blue+"22",color:C.blue}}>{e.category}</span></td>
+                  <td style={{padding:"10px 16px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(e.amount)}</td>
+                  <td style={{padding:"10px 16px",color:C.text}}>{e.vendor}</td>
+                  <td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{e.description}</td>
+                  <td style={{padding:"10px 16px",color:C.muted}}>{e.submitted_by||"—"}</td>
+                  {canDelete&&<td style={{padding:"10px 16px"}}><DelBtn onClick={()=>setConfirm(e)}/></td>}
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       </div>
@@ -520,24 +885,55 @@ const Expenses = ({expenses}) => {
   );
 };
 
-const Inventory = ({inventory}) => (
-  <div>
-    <SectionHeader title="Inventory & Stock"/>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
-      <KpiCard label="SKUs"         value={inventory.length} sub="Products" color={C.blue}/>
-      <KpiCard label="Total Value"  value={fmt(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green}/>
-      <KpiCard label="Low Stock"    value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down"/>
-      <KpiCard label="Out of Stock" value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red} trend="down"/>
+const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
+  const [confirm, setConfirm] = useState(null);
+  const [toast, setToast]     = useState(null);
+  const showToast = (msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
+  const canDelete = userRole==="admin";
+
+  const doDelete = async (sku) => {
+    try {
+      await apiDelete(`/businesses/${bizId}/inventory/${sku}`);
+      showToast("✓ Product deleted"); onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setConfirm(null);
+  };
+
+  return (
+    <div>
+      {toast&&<Toast msg={toast.msg} color={toast.color}/>}
+      {confirm&&<ConfirmDelete message={`Delete product "${confirm.name}" (${confirm.sku})? All stock history for this item will be removed. This cannot be undone.`} onConfirm={()=>doDelete(confirm.sku)} onCancel={()=>setConfirm(null)}/>}
+      <SectionHeader title="Inventory & Stock"/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="SKUs"         value={inventory.length} sub="Products" color={C.blue}/>
+        <KpiCard label="Total Value"  value={fmt(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green}/>
+        <KpiCard label="Low Stock"    value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down"/>
+        <KpiCard label="Out of Stock" value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red} trend="down"/>
+      </div>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:16}}>
+        {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Admins can delete products using the ✕ button — this removes the product entirely</div>}
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead><tr style={{background:C.surface}}>{["SKU","Product","Stock","Reorder","Unit Cost","Value","Status",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+          <tbody>
+            {inventory.map(item=>(
+              <tr key={item.id} style={{borderTop:`1px solid ${C.border}`}}>
+                <td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{item.sku}</td>
+                <td style={{padding:"12px 16px",color:C.text}}>{item.name}</td>
+                <td style={{padding:"12px 16px",color:item.stock===0?C.red:item.stock<item.reorder?C.accent:C.text,fontFamily:"'DM Mono',monospace"}}>{item.stock.toLocaleString()}</td>
+                <td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{item.reorder}</td>
+                <td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{fmtFull(item.unit_cost)}</td>
+                <td style={{padding:"12px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(item.stock*item.unit_cost)}</td>
+                <td style={{padding:"12px 16px"}}><Badge status={item.status}/></td>
+                {canDelete&&<td style={{padding:"12px 16px"}}><DelBtn onClick={()=>setConfirm(item)}/></td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ChartCard title="Stock vs Reorder Points" height={200}><ResponsiveContainer><BarChart data={inventory.map(i=>({name:i.sku,stock:i.stock,reorder:i.reorder}))}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="name" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Bar dataKey="stock" fill={C.blue} name="Stock" radius={[3,3,0,0]}/><Bar dataKey="reorder" fill={C.accent} name="Reorder" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
     </div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:16}}>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-        <thead><tr style={{background:C.surface}}>{["SKU","Product","Stock","Reorder","Unit Cost","Value","Status"].map(h=><th key={h} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-        <tbody>{inventory.map(item=><tr key={item.id} style={{borderTop:`1px solid ${C.border}`}}><td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{item.sku}</td><td style={{padding:"12px 16px",color:C.text}}>{item.name}</td><td style={{padding:"12px 16px",color:item.stock===0?C.red:item.stock<item.reorder?C.accent:C.text,fontFamily:"'DM Mono',monospace"}}>{item.stock.toLocaleString()}</td><td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{item.reorder}</td><td style={{padding:"12px 16px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{fmtFull(item.unit_cost)}</td><td style={{padding:"12px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(item.stock*item.unit_cost)}</td><td style={{padding:"12px 16px"}}><Badge status={item.status}/></td></tr>)}</tbody>
-      </table>
-    </div>
-    <ChartCard title="Stock vs Reorder Points" height={200}><ResponsiveContainer><BarChart data={inventory.map(i=>({name:i.sku,stock:i.stock,reorder:i.reorder}))}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="name" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Bar dataKey="stock" fill={C.blue} name="Stock" radius={[3,3,0,0]}/><Bar dataKey="reorder" fill={C.accent} name="Reorder" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
-  </div>
-);
+  );
+};
 
 const PL = ({sales,expenses}) => {
   const sd=aggregateSalesByMonth(sales); const ed=aggregateExpensesByMonth(expenses);
@@ -557,7 +953,9 @@ const PL = ({sales,expenses}) => {
 };
 
 // ── Cash Balance Page ─────────────────────────────────────────────────────────
-const CashPage = ({bizId, user}) => {
+const CashPage = ({bizId, user, userRole}) => {
+  const canDelete = userRole==="manager"||userRole==="admin";
+  const [confirmCash, setConfirmCash] = useState(null);
   const [balances, setBalances]   = useState([]);
   const [loading, setLoading]     = useState(true);
   const [toast, setToast]         = useState(null);
@@ -565,6 +963,17 @@ const CashPage = ({bizId, user}) => {
   const [form, setForm]           = useState({
     date: todayStr(), opening_balance: "", closing_balance: "", notes: ""
   });
+
+  const [confirmBiz, setConfirmBiz]   = useState(null);
+
+  const deleteBusiness = async (id) => {
+    try {
+      await apiPatch(`/businesses/${id}`, {is_active: false});
+      showToast("✓ Business deactivated");
+      onBusinessCreated(null); // trigger refresh
+    } catch(e) { showToast(e.message, C.red); }
+    setConfirmBiz(null);
+  };
 
   const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
@@ -607,9 +1016,18 @@ const CashPage = ({bizId, user}) => {
   const bestDay     = balances.length ? balances.reduce((best,b)=>b.closing_balance>best.closing_balance?b:best, balances[0]) : null;
   const movement    = latest ? latest.closing_balance - latest.opening_balance : 0;
 
+  const deleteCash = async (id) => {
+    try {
+      await apiDelete(`/businesses/${bizId}/cash/${id}`);
+      showToast("✓ Record deleted"); load();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setConfirmCash(null);
+  };
+
   return (
     <div>
       {toast && <Toast msg={toast.msg} color={toast.color}/>}
+      {confirmCash&&<ConfirmDelete message={`Delete cash balance record for ${confirmCash.date}? This cannot be undone.`} onConfirm={()=>deleteCash(confirmCash.id)} onCancel={()=>setConfirmCash(null)}/>}
       <SectionHeader title="Cash Balance" subtitle="Daily opening and closing cash position"/>
 
       {/* KPI cards */}
@@ -721,7 +1139,7 @@ const CashPage = ({bizId, user}) => {
           <div style={{maxHeight:320,overflowY:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead style={{position:"sticky",top:0,background:C.surface}}>
-                <tr>{["Date","Opening","Closing","Movement","Notes"].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+                <tr>{["Date","Opening","Closing","Movement","Notes",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
               </thead>
               <tbody>
                 {balances.map(b=>{
@@ -733,6 +1151,7 @@ const CashPage = ({bizId, user}) => {
                       <td style={{padding:"10px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.closing_balance)}</td>
                       <td style={{padding:"10px 16px",color:diff>=0?C.green:C.red,fontFamily:"'DM Mono',monospace"}}>{diff>=0?"+":""}{fmtFull(diff)}</td>
                       <td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{b.notes||"—"}</td>
+                      {canDelete&&<td style={{padding:"10px 16px"}}><DelBtn onClick={()=>setConfirmCash(b)}/></td>}
                     </tr>
                   );
                 })}
@@ -813,15 +1232,23 @@ export default function BizMonitor() {
     {id:"pl",       label:"P&L",        icon:"≋"},
   ];
 
+  const bizRole = activeBiz ? crud_get_role() : user.role;
+
+  // helper — get user's role in the active business
+  function crud_get_role() {
+    if (user.role === "admin") return "admin";
+    return user.role; // fallback to global role
+  }
+
   const pageMap = {
-    admin:    <AdminPanel user={user} businesses={businesses} onBusinessCreated={b=>{setBusinesses(p=>[...p,b]);}}/>,
+    admin:    <AdminPanel user={user} businesses={businesses} onBusinessCreated={b=>{if(b)setBusinesses(p=>[...p,b]);else apiGet("/businesses").then(setBusinesses).catch(()=>{});}}/>,
     entry:    <DataEntry  inventory={inventory} onRefresh={loadBizData} bizId={activeBiz?.id} apiStatus={apiStatus}/>,
     overview: <Overview   sales={sales} expenses={expenses} inventory={inventory} summary={summary}/>,
-    sales:    <Sales      sales={sales}/>,
-    expenses: <Expenses   expenses={expenses}/>,
-    inventory:<Inventory  inventory={inventory}/>,
+    sales:    <Sales      sales={sales} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
+    expenses: <Expenses   expenses={expenses} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
+    inventory:<Inventory  inventory={inventory} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
     pl:       <PL         sales={sales} expenses={expenses}/>,
-    cash:     <CashPage   bizId={activeBiz?.id} user={user}/>,
+    cash:     <CashPage   bizId={activeBiz?.id} user={user} userRole={bizRole}/>,
   };
 
   return (
