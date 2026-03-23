@@ -556,6 +556,195 @@ const PL = ({sales,expenses}) => {
   );
 };
 
+// ── Cash Balance Page ─────────────────────────────────────────────────────────
+const CashPage = ({bizId, user}) => {
+  const [balances, setBalances]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [toast, setToast]         = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm]           = useState({
+    date: todayStr(), opening_balance: "", closing_balance: "", notes: ""
+  });
+
+  const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
+
+  const load = async () => {
+    try { setBalances(await apiGet(`/businesses/${bizId}/cash`)); }
+    catch(e) { showToast(e.message, C.red); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [bizId]);
+
+  const submit = async () => {
+    if (!form.opening_balance || !form.closing_balance) return showToast("Enter both opening and closing balance", C.red);
+    setSubmitting(true);
+    try {
+      await apiPost(`/businesses/${bizId}/cash`, {
+        ...form,
+        opening_balance: Number(form.opening_balance),
+        closing_balance: Number(form.closing_balance),
+      });
+      setForm({ date: todayStr(), opening_balance: "", closing_balance: "", notes: "" });
+      showToast("✓ Balance recorded");
+      load();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setSubmitting(false);
+  };
+
+  // Build chart data from balances (last 30 days, oldest first)
+  const chartData = balances.slice(0, 30).reverse().map(b => ({
+    date: String(b.date).slice(5), // MM-DD
+    opening: b.opening_balance,
+    closing: b.closing_balance,
+    movement: b.closing_balance - b.opening_balance,
+  }));
+
+  // Summary stats
+  const latest      = balances[0] || null;
+  const prev        = balances[1] || null;
+  const avgClosing  = balances.length ? balances.reduce((s,b)=>s+b.closing_balance,0)/balances.length : 0;
+  const bestDay     = balances.length ? balances.reduce((best,b)=>b.closing_balance>best.closing_balance?b:best, balances[0]) : null;
+  const movement    = latest ? latest.closing_balance - latest.opening_balance : 0;
+
+  return (
+    <div>
+      {toast && <Toast msg={toast.msg} color={toast.color}/>}
+      <SectionHeader title="Cash Balance" subtitle="Daily opening and closing cash position"/>
+
+      {/* KPI cards */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="Latest Closing" value={latest?fmtFull(latest.closing_balance):"—"} sub={latest?String(latest.date):"No records yet"} color={C.green} trend={movement>=0?"up":"down"}/>
+        <KpiCard label="Latest Opening" value={latest?fmtFull(latest.opening_balance):"—"} sub="Most recent day" color={C.blue}/>
+        <KpiCard label="Daily Movement" value={latest?`${movement>=0?"+":""}${fmtFull(movement)}`:"—"} sub="Close minus open" color={movement>=0?C.green:C.red} trend={movement>=0?"up":"down"}/>
+        <KpiCard label="Avg Closing" value={fmtFull(Math.round(avgClosing))} sub={`Over ${balances.length} days`} color={C.accent}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+
+        {/* Entry form */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:20}}>
+            <span style={{background:C.accentDim,padding:"4px 12px",borderRadius:6}}>💵 Record Daily Balance</span>
+          </div>
+          <Field label="Date *">
+            <input type="date" style={iStyle} value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+          </Field>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Opening Balance *">
+              <input type="number" style={iStyle} placeholder="0.00" value={form.opening_balance} onChange={e=>setForm({...form,opening_balance:e.target.value})}/>
+            </Field>
+            <Field label="Closing Balance *">
+              <input type="number" style={iStyle} placeholder="0.00" value={form.closing_balance} onChange={e=>setForm({...form,closing_balance:e.target.value})}/>
+            </Field>
+          </div>
+          {/* Live movement preview */}
+          {form.opening_balance && form.closing_balance && (() => {
+            const diff = Number(form.closing_balance) - Number(form.opening_balance);
+            return (
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"10px 14px",marginBottom:14,fontSize:12,display:"flex",justifyContent:"space-between"}}>
+                <span style={{color:C.muted}}>Daily movement</span>
+                <span style={{fontFamily:"'DM Mono',monospace",color:diff>=0?C.green:C.red,fontWeight:700}}>
+                  {diff>=0?"+":""}{fmtFull(diff)}
+                </span>
+              </div>
+            );
+          })()}
+          <Field label="Notes">
+            <textarea style={{...iStyle,resize:"vertical",minHeight:60}} placeholder="e.g. Market day, payday, etc." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+          </Field>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12}}>
+            💡 Submitting for a date that already exists will update that record.
+          </div>
+          <button onClick={submit} disabled={submitting} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:C.accent,color:"#000",fontWeight:700,fontSize:14,cursor:submitting?"not-allowed":"pointer",opacity:submitting?0.7:1}}>
+            {submitting?"Saving…":"💾 Save Balance"}
+          </button>
+        </div>
+
+        {/* Recent records */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+          <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Recent Records</div>
+          {loading ? <Spinner/> : balances.length === 0
+            ? <div style={{color:C.muted,fontSize:13,textAlign:"center",paddingTop:40}}>No records yet.<br/>Record today's balance above.</div>
+            : <div style={{display:"grid",gap:8,maxHeight:400,overflowY:"auto"}}>
+                {balances.slice(0,15).map(b => {
+                  const diff = b.closing_balance - b.opening_balance;
+                  return (
+                    <div key={b.id} style={{background:C.surface,borderRadius:7,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div>
+                          <div style={{fontSize:12,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{String(b.date)}</div>
+                          {b.notes && <div style={{fontSize:11,color:C.dim,marginTop:2}}>{b.notes}</div>}
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:13,fontWeight:600,color:diff>=0?C.green:C.red}}>
+                            {diff>=0?"+":""}{fmtFull(diff)}
+                          </div>
+                          <div style={{fontSize:10,color:C.muted,marginTop:2}}>close: {fmtFull(b.closing_balance)}</div>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:16,marginTop:8,fontSize:11}}>
+                        <span style={{color:C.muted}}>Open: <span style={{color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.opening_balance)}</span></span>
+                        <span style={{color:C.muted}}>Close: <span style={{color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.closing_balance)}</span></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+          }
+        </div>
+      </div>
+
+      {/* Chart */}
+      {chartData.length > 1 && (
+        <ChartCard title="Opening vs Closing Balance — Last 30 Days" height={240}>
+          <ResponsiveContainer>
+            <AreaChart data={chartData}>
+              <defs>
+                <linearGradient id="og" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.blue} stopOpacity={0.3}/><stop offset="95%" stopColor={C.blue} stopOpacity={0}/></linearGradient>
+                <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.green} stopOpacity={0.3}/><stop offset="95%" stopColor={C.green} stopOpacity={0}/></linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.dim}/>
+              <XAxis dataKey="date" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>fmt(v)}/>
+              <Tooltip content={<Tip/>}/>
+              <Area type="monotone" dataKey="opening" stroke={C.blue}  fill="url(#og)" strokeWidth={2} name="Opening"/>
+              <Area type="monotone" dataKey="closing" stroke={C.green} fill="url(#cg)" strokeWidth={2} name="Closing"/>
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      {/* Full table */}
+      {balances.length > 0 && (
+        <div style={{marginTop:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+          <div style={{maxHeight:320,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead style={{position:"sticky",top:0,background:C.surface}}>
+                <tr>{["Date","Opening","Closing","Movement","Notes"].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {balances.map(b=>{
+                  const diff = b.closing_balance - b.opening_balance;
+                  return (
+                    <tr key={b.id} style={{borderTop:`1px solid ${C.border}`}}>
+                      <td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(b.date)}</td>
+                      <td style={{padding:"10px 16px",color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.opening_balance)}</td>
+                      <td style={{padding:"10px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.closing_balance)}</td>
+                      <td style={{padding:"10px 16px",color:diff>=0?C.green:C.red,fontFamily:"'DM Mono',monospace"}}>{diff>=0?"+":""}{fmtFull(diff)}</td>
+                      <td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{b.notes||"—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function BizMonitor() {
   const [user, setUser]               = useState(null);
@@ -632,6 +821,7 @@ export default function BizMonitor() {
     expenses: <Expenses   expenses={expenses}/>,
     inventory:<Inventory  inventory={inventory}/>,
     pl:       <PL         sales={sales} expenses={expenses}/>,
+    cash:     <CashPage   bizId={activeBiz?.id} user={user}/>,
   };
 
   return (
@@ -668,9 +858,9 @@ export default function BizMonitor() {
               <span style={{fontFamily:"monospace"}}>✎</span> Data Entry
             </button>
             <div style={{fontSize:10,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"0 12px 6px"}}>Dashboards</div>
-            {["overview","sales","expenses","inventory","pl"].map(id=>{
-              const icons={overview:"⬡",sales:"↑",expenses:"↓",inventory:"▣",pl:"≋"};
-              const labels={overview:"Overview",sales:"Sales",expenses:"Expenses",inventory:"Inventory",pl:"P&L"};
+            {["overview","sales","expenses","inventory","pl","cash"].map(id=>{
+              const icons={overview:"⬡",sales:"↑",expenses:"↓",inventory:"▣",pl:"≋",cash:"💵"};
+              const labels={overview:"Overview",sales:"Sales",expenses:"Expenses",inventory:"Inventory",pl:"P&L",cash:"Cash Balance"};
               return <button key={id} onClick={()=>setPage(id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:6,border:"none",cursor:"pointer",background:page===id?C.accentDim:"transparent",color:page===id?C.accent:C.muted,fontSize:13,fontWeight:page===id?600:400,marginBottom:2,borderLeft:page===id?`2px solid ${C.accent}`:"2px solid transparent",fontFamily:"'IBM Plex Sans',sans-serif"}}>
                 <span style={{fontFamily:"monospace",width:16,textAlign:"center"}}>{icons[id]}</span>{labels[id]}
               </button>;
