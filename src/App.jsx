@@ -591,9 +591,9 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
   const [toast, setToast]     = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // Sale — unit price + units → auto-total
+  // Sale — inventory-linked with unit price × units = total
   const [sale, setSale] = useState({
-    date: todayStr(), product: "", unit_price: "", units: "", rep: "", notes: ""
+    date: todayStr(), sku: "", product: "", unit_price: "", units: "", rep: "", notes: ""
   });
 
   // Expense
@@ -614,26 +614,50 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
   const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const ok = apiStatus === "ok";
 
+  // When an inventory item is selected, pre-fill product name
+  const selectedInventoryItem = inventory.find(i => i.sku === sale.sku);
+
   // Auto-calculate sale total
   const saleTotal = sale.unit_price && sale.units
     ? Number(sale.unit_price) * Number(sale.units)
     : null;
+
+  // Profit preview per sale
+  const saleCost  = selectedInventoryItem && sale.units ? selectedInventoryItem.unit_cost * Number(sale.units) : null;
+  const saleProfit = saleTotal !== null && saleCost !== null ? saleTotal - saleCost : null;
+  const saleMargin = saleTotal && saleProfit !== null ? (saleProfit / saleTotal * 100).toFixed(1) : null;
+
+  const handleSkuSelect = (sku) => {
+    const item = inventory.find(i => i.sku === sku);
+    setSale(prev => ({
+      ...prev, sku,
+      product: item ? item.name : prev.product,
+    }));
+  };
 
   const submitSale = async () => {
     if (!sale.product || !sale.unit_price || !sale.units)
       return showToast("✕ Fill in product, unit price and units", C.red);
     if (Number(sale.unit_price) <= 0 || Number(sale.units) <= 0)
       return showToast("✕ Price and units must be greater than zero", C.red);
+    if (selectedInventoryItem && Number(sale.units) > selectedInventoryItem.stock)
+      return showToast(`✕ Only ${selectedInventoryItem.stock} units in stock`, C.red);
     setLoading(true);
     try {
       await apiPost(`/businesses/${bizId}/sales`, {
-        date: sale.date, product: sale.product,
-        amount: saleTotal,           // total = price × units
+        date: sale.date,
+        sku: sale.sku || null,
+        product: sale.product,
+        unit_price: Number(sale.unit_price),
+        amount: saleTotal,
         units: Number(sale.units),
-        rep: sale.rep, notes: sale.notes,
+        rep: sale.rep,
+        notes: sale.notes,
       });
-      setSale({ date: todayStr(), product: "", unit_price: "", units: "", rep: "", notes: "" });
-      showToast("✓ Sale saved");
+      setSale({ date: todayStr(), sku: "", product: "", unit_price: "", units: "", rep: "", notes: "" });
+      showToast(selectedInventoryItem
+        ? `✓ Sale saved — ${sale.units} units deducted from stock`
+        : "✓ Sale saved");
       onRefresh();
     } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
@@ -727,33 +751,73 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
             <Field label="Date *">
               <input type="date" style={iStyle} value={sale.date} onChange={e=>setSale({...sale,date:e.target.value})}/>
             </Field>
-            <Field label="Product / Service *">
-              <input type="text" style={iStyle} placeholder="e.g. Reasdun Tshirt" value={sale.product} onChange={e=>setSale({...sale,product:e.target.value})}/>
+
+            {/* Inventory dropdown */}
+            <Field label="Product from Inventory *">
+              <select style={iStyle} value={sale.sku} onChange={e=>handleSkuSelect(e.target.value)}>
+                <option value="">— Select product —</option>
+                {inventory.map(i=>(
+                  <option key={i.sku} value={i.sku}>
+                    {i.name} ({i.sku}) — {i.stock} in stock
+                  </option>
+                ))}
+                <option value="__manual__">✎ Enter manually (not in inventory)</option>
+              </select>
             </Field>
 
-            {/* Price × Units = Total */}
+            {/* Show manual text input if not from inventory */}
+            {sale.sku === "__manual__" && (
+              <Field label="Product / Service Name *">
+                <input type="text" style={iStyle} placeholder="e.g. Custom Service" value={sale.product} onChange={e=>setSale({...sale,product:e.target.value})}/>
+              </Field>
+            )}
+
+            {/* Stock warning */}
+            {selectedInventoryItem && (
+              <div style={{
+                padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:12,
+                background: selectedInventoryItem.status==="out" ? C.red+"18" : selectedInventoryItem.status==="low" ? C.accent+"18" : C.green+"10",
+                color: selectedInventoryItem.status==="out" ? C.red : selectedInventoryItem.status==="low" ? C.accent : C.green,
+                border:`1px solid ${selectedInventoryItem.status==="out"?C.red:selectedInventoryItem.status==="low"?C.accent:C.green}33`,
+              }}>
+                {selectedInventoryItem.status==="out"
+                  ? "⚠ Out of stock — cannot sell"
+                  : selectedInventoryItem.status==="low"
+                  ? `⚠ Low stock — only ${selectedInventoryItem.stock} units remaining`
+                  : `✓ ${selectedInventoryItem.stock} units in stock · Cost price: ${fmtFull(selectedInventoryItem.unit_cost)}`
+                }
+              </div>
+            )}
+
+            {/* Price × Units */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Unit Price *">
-                <input type="number" style={iStyle} placeholder="Price per unit" value={sale.unit_price} onChange={e=>setSale({...sale,unit_price:e.target.value})}/>
+              <Field label="Selling Price (per unit) *">
+                <input type="number" style={iStyle} placeholder="Selling price" value={sale.unit_price} onChange={e=>setSale({...sale,unit_price:e.target.value})}/>
               </Field>
               <Field label="Units Sold *">
-                <input type="number" style={iStyle} placeholder="Qty" value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/>
+                <input type="number" style={iStyle} placeholder="Qty"
+                  max={selectedInventoryItem?.stock||undefined}
+                  value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/>
               </Field>
             </div>
 
-            {/* Live total preview */}
+            {/* Live calculation box */}
             {saleTotal !== null && (
-              <div style={{
-                background: C.green+"12", border:`1px solid ${C.green}44`,
-                borderRadius:7, padding:"12px 16px", marginBottom:14,
-                display:"flex", justifyContent:"space-between", alignItems:"center"
-              }}>
-                <div style={{fontSize:12,color:C.muted}}>
-                  {fmtFull(Number(sale.unit_price))} × {sale.units} units
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 16px",marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <span style={{fontSize:12,color:C.muted}}>Revenue ({fmtFull(Number(sale.unit_price))} × {sale.units})</span>
+                  <span style={{fontSize:14,fontWeight:700,color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(saleTotal)}</span>
                 </div>
-                <div style={{fontSize:18,fontWeight:700,color:C.green,fontFamily:"'DM Mono',monospace"}}>
-                  = {fmtFull(saleTotal)}
-                </div>
+                {saleCost !== null && <>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={{fontSize:12,color:C.muted}}>Cost ({fmtFull(selectedInventoryItem.unit_cost)} × {sale.units})</span>
+                    <span style={{fontSize:14,fontWeight:700,color:C.red,fontFamily:"'DM Mono',monospace"}}>− {fmtFull(saleCost)}</span>
+                  </div>
+                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontSize:12,color:C.muted}}>Gross Profit <span style={{color:C.dim}}>({saleMargin}% margin)</span></span>
+                    <span style={{fontSize:15,fontWeight:700,color:saleProfit>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace"}}>{saleProfit>=0?"":"-"}{fmtFull(Math.abs(saleProfit))}</span>
+                  </div>
+                </>}
               </div>
             )}
 
@@ -761,32 +825,40 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
               <input type="text" style={iStyle} placeholder="Staff name (optional)" value={sale.rep} onChange={e=>setSale({...sale,rep:e.target.value})}/>
             </Field>
             <Field label="Notes">
-              <textarea style={{...iStyle,resize:"vertical",minHeight:52}} placeholder="Optional notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+              <textarea style={{...iStyle,resize:"vertical",minHeight:48}} placeholder="Optional" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
             </Field>
-            <button onClick={submitSale} disabled={loading||!ok} style={{
+            <button onClick={submitSale} disabled={loading||!ok||selectedInventoryItem?.status==="out"} style={{
               width:"100%",padding:"11px",borderRadius:7,border:"none",
-              background:ok?C.green:C.dim,color:"#000",fontWeight:700,fontSize:14,
-              cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1
+              background:ok&&selectedInventoryItem?.status!=="out"?C.green:C.dim,
+              color:"#000",fontWeight:700,fontSize:14,
+              cursor:ok&&selectedInventoryItem?.status!=="out"?"pointer":"not-allowed",opacity:loading?0.7:1
             }}>{loading?"Saving…":"💾 Submit Sale"}</button>
           </div>
 
-          {/* Right panel — tips */}
+          {/* Right — inventory quick view */}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>How It Works</div>
-            <div style={{display:"grid",gap:12}}>
-              {[
-                ["Unit Price","Enter the selling price of one item — e.g. 5000"],
-                ["Units","How many were sold — e.g. 3"],
-                ["Total","Auto-calculated: 5000 × 3 = 15,000. This is what gets recorded as revenue."],
-                ["Rep","Which staff member made the sale (optional)"],
-                ["Date","The date the sale happened — affects monthly charts"],
-              ].map(([title,desc])=>(
-                <div key={title} style={{padding:"10px 14px",background:C.surface,borderRadius:7}}>
-                  <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:3}}>{title}</div>
-                  <div style={{fontSize:12,color:C.muted}}>{desc}</div>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Inventory Quick View</div>
+            {inventory.length===0
+              ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet.<br/>Add products using the <strong style={{color:C.purple}}>＋ Add Product</strong> tab.</div>
+              : <div style={{display:"grid",gap:8,maxHeight:460,overflowY:"auto"}}>
+                  {inventory.map(item=>(
+                    <div key={item.sku} onClick={()=>handleSkuSelect(item.sku)} style={{
+                      display:"flex",justifyContent:"space-between",alignItems:"center",
+                      padding:"10px 14px",background:C.surface,borderRadius:6,cursor:"pointer",
+                      border:`1px solid ${sale.sku===item.sku?C.green:C.border}`,
+                    }}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:C.text}}>{item.name}</div>
+                        <div style={{fontSize:10,color:C.muted,marginTop:1}}>{item.sku} · cost: {fmtFull(item.unit_cost)}</div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:item.status==="out"?C.red:item.status==="low"?C.accent:C.text}}>{item.stock}</div>
+                        <Badge status={item.status}/>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+            }
           </div>
         </>}
 
@@ -1014,50 +1086,79 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const sd=aggregateSalesByMonth(sales);
   const [confirm, setConfirm] = useState(null);
   const [toast, setToast]     = useState(null);
+  const [filter, setFilter]   = useState("all"); // all | week | month
   const showToast = (msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete = userRole==="manager"||userRole==="admin";
 
   const doDelete = async (id) => {
-    try {
-      await apiDelete(`/businesses/${bizId}/sales/${id}`);
-      showToast("✓ Sale deleted"); onRefresh();
-    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    try { await apiDelete(`/businesses/${bizId}/sales/${id}`); showToast("✓ Sale deleted"); onRefresh(); }
+    catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setConfirm(null);
   };
+
+  const now = new Date();
+  const filteredSales = sales.filter(s => {
+    if (filter==="all") return true;
+    const d = new Date(s.date);
+    if (filter==="week") { const w=new Date(now); w.setDate(w.getDate()-7); return d>=w; }
+    if (filter==="month") { return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }
+    return true;
+  });
+
+  const totalRevenue = filteredSales.reduce((s,d)=>s+d.amount,0);
+  const totalCOGS    = filteredSales.reduce((s,d)=>s+(d.unit_cost||0)*d.units,0);
+  const grossProfit  = totalRevenue - totalCOGS;
 
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
-      {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}? This cannot be undone.`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
+      {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Total Revenue" value={fmt(sales.reduce((s,d)=>s+d.amount,0))} sub="All entries" trend="up" color={C.green}/>
-        <KpiCard label="Total Units"   value={sales.reduce((s,d)=>s+d.units,0).toLocaleString()} sub="All time" color={C.blue}/>
-        <KpiCard label="Entries"       value={sales.length} sub="In database" color={C.accent}/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="Revenue"      value={fmt(totalRevenue)}  sub="Total sales"  trend="up" color={C.green}/>
+        <KpiCard label="COGS"         value={fmt(totalCOGS)}     sub="Cost of goods" color={C.red}/>
+        <KpiCard label="Gross Profit" value={fmt(grossProfit)}   sub={`${totalRevenue?(grossProfit/totalRevenue*100).toFixed(1):0}% margin`} trend={grossProfit>=0?"up":"down"} color={C.accent}/>
+        <KpiCard label="Units Sold"   value={filteredSales.reduce((s,d)=>s+d.units,0).toLocaleString()} sub="Total units" color={C.blue}/>
       </div>
+
+      {/* Period filter */}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["all","All Time"],["month","This Month"],["week","This Week"]].map(([val,label])=>(
+          <button key={val} onClick={()=>setFilter(val)} style={{padding:"6px 14px",borderRadius:6,border:`1px solid ${filter===val?C.accent:C.border}`,background:filter===val?C.accentDim:"transparent",color:filter===val?C.accent:C.muted,fontSize:12,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:filter===val?700:400}}>{label}</button>
+        ))}
+      </div>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
         <ChartCard title="Monthly Revenue" height={230}><ResponsiveContainer><BarChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.green} name="Revenue" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="Units Sold" height={230}><ResponsiveContainer><LineChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Line type="monotone" dataKey="units" stroke={C.accent} strokeWidth={2} dot={{fill:C.accent,r:3}} name="Units"/></LineChart></ResponsiveContainer></ChartCard>
       </div>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
         {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Managers and admins can delete entries using the ✕ button</div>}
-        <div style={{maxHeight:340,overflowY:"auto"}}>
+        <div style={{maxHeight:360,overflowY:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,background:C.surface}}>
-              <tr>{["Date","Product","Amount","Units","Rep","Notes",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+              <tr>{["Date","Product","Price","Units","Revenue","COGS","Profit","Margin","Rep",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"10px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:10,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {sales.map(s=>(
-                <tr key={s.id} style={{borderTop:`1px solid ${C.border}`}}>
-                  <td style={{padding:"10px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>{String(s.date)}</td>
-                  <td style={{padding:"10px 16px",color:C.text}}>{s.product}</td>
-                  <td style={{padding:"10px 16px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(s.amount)}</td>
-                  <td style={{padding:"10px 16px",color:C.text}}>{s.units}</td>
-                  <td style={{padding:"10px 16px",color:C.muted}}>{s.rep||"—"}</td>
-                  <td style={{padding:"10px 16px",color:C.muted,fontSize:12}}>{s.notes||"—"}</td>
-                  {canDelete&&<td style={{padding:"10px 16px"}}><DelBtn onClick={()=>setConfirm(s)}/></td>}
-                </tr>
-              ))}
+              {filteredSales.map(s=>{
+                const cogs   = (s.unit_cost||0)*s.units;
+                const profit = s.amount - cogs;
+                const margin = s.amount ? (profit/s.amount*100).toFixed(1) : "—";
+                return (
+                  <tr key={s.id} style={{borderTop:`1px solid ${C.border}`}}>
+                    <td style={{padding:"10px 12px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:11}}>{String(s.date)}</td>
+                    <td style={{padding:"10px 12px",color:C.text}}>{s.product}{s.sku&&<span style={{fontSize:10,color:C.dim,marginLeft:4}}>({s.sku})</span>}</td>
+                    <td style={{padding:"10px 12px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:11}}>{s.unit_price?fmtFull(s.unit_price):"—"}</td>
+                    <td style={{padding:"10px 12px",color:C.text}}>{s.units}</td>
+                    <td style={{padding:"10px 12px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(s.amount)}</td>
+                    <td style={{padding:"10px 12px",color:C.red,fontFamily:"'DM Mono',monospace",fontSize:11}}>{cogs?fmtFull(cogs):"—"}</td>
+                    <td style={{padding:"10px 12px",color:profit>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{cogs?fmtFull(profit):"—"}</td>
+                    <td style={{padding:"10px 12px",color:C.muted,fontSize:11}}>{cogs?`${margin}%`:"—"}</td>
+                    <td style={{padding:"10px 12px",color:C.muted,fontSize:11}}>{s.rep||"—"}</td>
+                    {canDelete&&<td style={{padding:"10px 12px"}}><DelBtn onClick={()=>setConfirm(s)}/></td>}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1119,23 +1220,43 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
 };
 
 const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
-  const [confirm, setConfirm] = useState(null);
-  const [toast, setToast]     = useState(null);
+  const [confirm, setConfirm]     = useState(null);
+  const [toast, setToast]         = useState(null);
+  const [movements, setMovements] = useState([]);
+  const [movFilter, setMovFilter] = useState("all");
   const showToast = (msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete = userRole==="admin";
 
+  useEffect(()=>{
+    apiGet(`/businesses/${bizId}/stock-movements`).then(setMovements).catch(()=>{});
+  },[bizId]);
+
   const doDelete = async (sku) => {
-    try {
-      await apiDelete(`/businesses/${bizId}/inventory/${sku}`);
-      showToast("✓ Product deleted"); onRefresh();
-    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    try { await apiDelete(`/businesses/${bizId}/inventory/${sku}`); showToast("✓ Product deleted"); onRefresh(); }
+    catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setConfirm(null);
   };
+
+  const now = new Date();
+  const filteredMovements = movements.filter(m => {
+    if (movFilter==="all")   return true;
+    const d = new Date(m.created_at);
+    if (movFilter==="week")  { const w=new Date(now); w.setDate(w.getDate()-7); return d>=w; }
+    if (movFilter==="month") { return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }
+    if (movFilter==="today") { return d.toDateString()===now.toDateString(); }
+    return true;
+  });
+
+  const mvTypeStyle = t => ({
+    add:    {color:C.green,  label:"Received"},
+    remove: {color:C.red,    label:"Dispatched"},
+    adjust: {color:C.accent, label:"Adjusted"},
+  }[t]||{color:C.muted, label:t};
 
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
-      {confirm&&<ConfirmDelete message={`Delete product "${confirm.name}" (${confirm.sku})? All stock history for this item will be removed. This cannot be undone.`} onConfirm={()=>doDelete(confirm.sku)} onCancel={()=>setConfirm(null)}/>}
+      {confirm&&<ConfirmDelete message={`Delete product "${confirm.name}" (${confirm.sku})? This cannot be undone.`} onConfirm={()=>doDelete(confirm.sku)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Inventory & Stock"/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
         <KpiCard label="SKUs"         value={inventory.length} sub="Products" color={C.blue}/>
@@ -1143,8 +1264,10 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
         <KpiCard label="Low Stock"    value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down"/>
         <KpiCard label="Out of Stock" value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red} trend="down"/>
       </div>
+
+      {/* Current stock table */}
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden",marginBottom:16}}>
-        {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Admins can delete products using the ✕ button — this removes the product entirely</div>}
+        {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Admins can delete products using the ✕ button</div>}
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:C.surface}}>{["SKU","Product","Stock","Reorder","Unit Cost","Value","Status",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"12px 16px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
           <tbody>
@@ -1163,24 +1286,156 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
           </tbody>
         </table>
       </div>
+
       <ChartCard title="Stock vs Reorder Points" height={200}><ResponsiveContainer><BarChart data={inventory.map(i=>({name:i.sku,stock:i.stock,reorder:i.reorder}))}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="name" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Bar dataKey="stock" fill={C.blue} name="Stock" radius={[3,3,0,0]}/><Bar dataKey="reorder" fill={C.accent} name="Reorder" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+
+      {/* Stock Movement History */}
+      <div style={{marginTop:20}}>
+        <SectionHeader title="Stock Movement History" subtitle="All additions, dispatches and adjustments with date filter"/>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          {[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]].map(([val,label])=>(
+            <button key={val} onClick={()=>setMovFilter(val)} style={{padding:"6px 14px",borderRadius:6,border:`1px solid ${movFilter===val?C.blue:C.border}`,background:movFilter===val?C.blue+"18":"transparent",color:movFilter===val?C.blue:C.muted,fontSize:12,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:movFilter===val?700:400}}>{label}</button>
+          ))}
+          <span style={{marginLeft:"auto",fontSize:12,color:C.muted,alignSelf:"center"}}>{filteredMovements.length} movements</span>
+        </div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+          <div style={{maxHeight:360,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead style={{position:"sticky",top:0,background:C.surface}}>
+                <tr>{["Date & Time","SKU","Type","Qty","Before","After","Reason","By"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {filteredMovements.length===0
+                  ? <tr><td colSpan={8} style={{padding:24,textAlign:"center",color:C.muted}}>No movements in this period</td></tr>
+                  : filteredMovements.map(m=>{
+                      const ts = mvTypeStyle(m.movement_type);
+                      const dt = new Date(m.created_at);
+                      return (
+                        <tr key={m.id} style={{borderTop:`1px solid ${C.border}`}}>
+                          <td style={{padding:"10px 14px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:11,whiteSpace:"nowrap"}}>
+                            {dt.toLocaleDateString()}<br/>
+                            <span style={{fontSize:10}}>{dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                          </td>
+                          <td style={{padding:"10px 14px",color:C.purple,fontFamily:"'DM Mono',monospace",fontSize:12}}>{m.sku}</td>
+                          <td style={{padding:"10px 14px"}}>
+                            <span style={{fontSize:11,padding:"2px 8px",borderRadius:4,background:ts.color+"22",color:ts.color,fontWeight:600}}>{ts.label}</span>
+                          </td>
+                          <td style={{padding:"10px 14px",color:m.movement_type==="remove"?C.red:C.green,fontFamily:"'DM Mono',monospace",fontWeight:600}}>
+                            {m.movement_type==="remove"?"-":"+"}{m.qty}
+                          </td>
+                          <td style={{padding:"10px 14px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{m.stock_before}</td>
+                          <td style={{padding:"10px 14px",color:C.text,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{m.stock_after}</td>
+                          <td style={{padding:"10px 14px",color:C.muted,fontSize:12}}>{m.reason||"—"}</td>
+                          <td style={{padding:"10px 14px",color:C.muted,fontSize:12}}>{m.received_by||"—"}</td>
+                        </tr>
+                      );
+                    })
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-const PL = ({sales,expenses}) => {
-  const sd=aggregateSalesByMonth(sales); const ed=aggregateExpensesByMonth(expenses);
-  const plData=sd.map((s,i)=>{const exp=ed[i].Operations+ed[i].Marketing+ed[i].Payroll+ed[i].Other;return{month:s.month,revenue:s.revenue,expenses:exp,profit:s.revenue-exp};});
-  const ytdRev=plData.reduce((s,d)=>s+d.revenue,0),ytdExp=plData.reduce((s,d)=>s+d.expenses,0);
+const PL = ({sales, expenses, summary}) => {
+  const sd  = aggregateSalesByMonth(sales);
+  const ed  = aggregateExpensesByMonth(expenses);
+
+  // Per-month COGS from actual sales data
+  const cogsMap = {};
+  months.forEach(m=>{ cogsMap[m]=0; });
+  sales.forEach(s=>{ if(cogsMap[s.month]!==undefined) cogsMap[s.month]+=(s.unit_cost||0)*s.units; });
+
+  const plData = sd.map((s,i)=>{
+    const exp     = ed[i].Operations+ed[i].Marketing+ed[i].Payroll+ed[i].Other;
+    const cogs    = cogsMap[s.month]||0;
+    const gross   = s.revenue - cogs;
+    const net     = gross - exp;
+    return { month:s.month, revenue:s.revenue, cogs, gross_profit:gross, expenses:exp, net_profit:net };
+  });
+
+  const ytdRev     = summary?.total_revenue   || plData.reduce((s,d)=>s+d.revenue,0);
+  const ytdCOGS    = summary?.total_cogs      || plData.reduce((s,d)=>s+d.cogs,0);
+  const ytdGross   = summary?.gross_profit    || ytdRev - ytdCOGS;
+  const ytdExp     = summary?.total_expenses  || plData.reduce((s,d)=>s+d.expenses,0);
+  const ytdNet     = summary?.net_profit      || ytdGross - ytdExp;
+  const grossMgn   = ytdRev ? (ytdGross/ytdRev*100).toFixed(1) : 0;
+  const netMgn     = ytdRev ? (ytdNet/ytdRev*100).toFixed(1)   : 0;
+
   return (
     <div>
-      <SectionHeader title="Profit & Loss"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Revenue"  value={fmt(ytdRev)}        sub="All sales"      trend="up" color={C.green}/>
-        <KpiCard label="Expenses" value={fmt(ytdExp)}        sub="All categories"            color={C.red}/>
-        <KpiCard label="Profit"   value={fmt(ytdRev-ytdExp)} sub={`Margin ${ytdRev?((ytdRev-ytdExp)/ytdRev*100).toFixed(1):0}%`} trend="up" color={C.accent}/>
+      <SectionHeader title="Profit & Loss" subtitle="True gross profit = Revenue minus cost of goods sold"/>
+
+      {/* Proper P&L waterfall KPIs */}
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:20,marginBottom:20}}>
+        <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Income Statement</div>
+        {[
+          {label:"Revenue (Sales)",      value:ytdRev,   color:C.green,  indent:0, bold:false},
+          {label:"Cost of Goods Sold",   value:-ytdCOGS, color:C.red,    indent:1, bold:false},
+          {label:"Gross Profit",         value:ytdGross, color:C.accent, indent:0, bold:true, sub:`${grossMgn}% gross margin`},
+          {label:"Operating Expenses",   value:-ytdExp,  color:C.red,    indent:1, bold:false},
+          {label:"Net Profit",           value:ytdNet,   color:ytdNet>=0?C.green:C.red, indent:0, bold:true, sub:`${netMgn}% net margin`},
+        ].map((row,i)=>(
+          <div key={i} style={{
+            display:"flex",justifyContent:"space-between",alignItems:"center",
+            padding:`${row.bold?"12px":"8px"} ${row.indent?32:16}px`,
+            borderTop:row.bold?`1px solid ${C.border}`:"none",
+            marginTop:row.bold?4:0,
+          }}>
+            <div>
+              <div style={{fontSize:row.bold?14:13,fontWeight:row.bold?700:400,color:row.bold?C.text:C.muted}}>{row.label}</div>
+              {row.sub&&<div style={{fontSize:11,color:C.dim,marginTop:2}}>{row.sub}</div>}
+            </div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:row.bold?16:14,fontWeight:row.bold?700:400,color:row.value>=0?row.color:C.red}}>
+              {row.value<0&&row.label!=="Net Profit"?"− ":""}{fmtFull(Math.abs(row.value))}
+            </div>
+          </div>
+        ))}
       </div>
-      <ChartCard title="Monthly P&L" height={270}><ResponsiveContainer><BarChart data={plData}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.green} name="Revenue" radius={[3,3,0,0]}/><Bar dataKey="expenses" fill={C.red} name="Expenses" radius={[3,3,0,0]}/><Bar dataKey="profit" fill={C.accent} name="Profit" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="Revenue"       value={fmt(ytdRev)}   sub="Total sales"     trend="up" color={C.green}/>
+        <KpiCard label="COGS"          value={fmt(ytdCOGS)}  sub="Cost of goods"              color={C.red}/>
+        <KpiCard label="Gross Profit"  value={fmt(ytdGross)} sub={`${grossMgn}% margin`} trend={ytdGross>=0?"up":"down"} color={C.accent}/>
+        <KpiCard label="Net Profit"    value={fmt(ytdNet)}   sub={`${netMgn}% net margin`} trend={ytdNet>=0?"up":"down"} color={ytdNet>=0?C.green:C.red}/>
+      </div>
+
+      <ChartCard title="Monthly P&L — Revenue / Gross Profit / Net Profit" height={280}>
+        <ResponsiveContainer>
+          <BarChart data={plData}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.dim}/>
+            <XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
+            <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/>
+            <Tooltip content={<Tip/>}/>
+            <Bar dataKey="revenue"      fill={C.green}  name="Revenue"      radius={[3,3,0,0]}/>
+            <Bar dataKey="gross_profit" fill={C.accent} name="Gross Profit" radius={[3,3,0,0]}/>
+            <Bar dataKey="net_profit"   fill={C.blue}   name="Net Profit"   radius={[3,3,0,0]}/>
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      {/* Monthly breakdown table */}
+      <div style={{marginTop:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead><tr style={{background:C.surface}}>{["Month","Revenue","COGS","Gross Profit","Expenses","Net Profit","Margin"].map(h=><th key={h} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+          <tbody>
+            {plData.filter(r=>r.revenue>0||r.expenses>0).map((row,i)=>(
+              <tr key={i} style={{borderTop:`1px solid ${C.border}`}}>
+                <td style={{padding:"11px 14px",color:C.text}}>{row.month}</td>
+                <td style={{padding:"11px 14px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.revenue)}</td>
+                <td style={{padding:"11px 14px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.cogs)}</td>
+                <td style={{padding:"11px 14px",color:C.accent,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtFull(row.gross_profit)}</td>
+                <td style={{padding:"11px 14px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.expenses)}</td>
+                <td style={{padding:"11px 14px",color:row.net_profit>=0?C.green:C.red,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtFull(row.net_profit)}</td>
+                <td style={{padding:"11px 14px",color:C.muted}}>{row.revenue?(row.net_profit/row.revenue*100).toFixed(1):0}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
@@ -1469,7 +1724,7 @@ export default function BizMonitor() {
     sales:    <Sales      sales={sales} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
     expenses: <Expenses   expenses={expenses} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
     inventory:<Inventory  inventory={inventory} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
-    pl:       <PL         sales={sales} expenses={expenses}/>,
+    pl:       <PL         sales={sales} expenses={expenses} summary={summary}/>,
     cash:     <CashPage   bizId={activeBiz?.id} user={user} userRole={bizRole}/>,
   };
 
