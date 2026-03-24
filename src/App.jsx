@@ -212,7 +212,53 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
     catch(e){showToast(e.message,C.red);}
   };
 
-  const tabs = [["users","👥 Users"],["businesses","🏢 Businesses"],["activity","📋 Activity Log"]];
+  const [selectedBiz, setSelectedBiz] = useState(null);
+  const [members, setMembers]         = useState([]);
+  const [memberToAdd, setMemberToAdd] = useState({userId:"", role:"employee"});
+  const [confirmMember, setConfirmMember] = useState(null);
+  const [confirmBiz, setConfirmBiz]   = useState(null);
+
+  const deleteBusiness = async (id) => {
+    try {
+      await apiPatch(`/businesses/${id}`, {is_active: false});
+      showToast("✓ Business deactivated");
+      onBusinessCreated(null);
+    } catch(e) { showToast(e.message, C.red); }
+    setConfirmBiz(null);
+  };
+
+  const loadMembers = async (bizId) => {
+    try { setMembers(await apiGet(`/businesses/${bizId}/members`)); }
+    catch(e) { showToast(e.message, C.red); }
+  };
+
+  const selectBiz = (b) => { setSelectedBiz(b); loadMembers(b.id); setMemberToAdd({userId:"",role:"employee"}); };
+
+  const addMember = async () => {
+    if (!memberToAdd.userId) return showToast("Select an employee first", C.red);
+    try {
+      await apiPost(`/businesses/${selectedBiz.id}/members`, { user_id: Number(memberToAdd.userId), role: memberToAdd.role });
+      loadMembers(selectedBiz.id);
+      setMemberToAdd({userId:"", role:"employee"});
+      showToast("✓ Employee added to business");
+    } catch(e) { showToast(e.message, C.red); }
+  };
+
+  const removeMember = async (userId) => {
+    try {
+      await apiDelete(`/businesses/${selectedBiz.id}/members/${userId}`);
+      loadMembers(selectedBiz.id);
+      showToast("✓ Employee removed");
+    } catch(e) { showToast(e.message, C.red); }
+    setConfirmMember(null);
+  };
+
+  // Users not yet in this business
+  const nonMembers = users.filter(u => !members.some(m => m.user_id === u.id));
+
+  const ROLE_COLORS = { admin: C.accent, manager: C.blue, employee: C.muted };
+
+  const tabs = [["users","👥 Users"],["businesses","🏢 Businesses"],["members","🔗 Members"],["activity","📋 Activity Log"]];
 
   return (
     <div>
@@ -296,19 +342,33 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
       {/* ── BUSINESSES TAB ── */}
       {tab==="businesses"&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+          {/* Create business */}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:20}}><span style={{background:C.accentDim,padding:"4px 12px",borderRadius:6}}>+ Create Business</span></div>
-            <Field label="Business Name *"><input type="text" style={iStyle} placeholder="Acme Ltd" value={newBiz.name} onChange={e=>setNewBiz({...newBiz,name:e.target.value})}/></Field>
-            <Field label="Industry"><input type="text" style={iStyle} placeholder="Retail, Manufacturing…" value={newBiz.industry} onChange={e=>setNewBiz({...newBiz,industry:e.target.value})}/></Field>
+            <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:20}}>
+              <span style={{background:C.accentDim,padding:"4px 12px",borderRadius:6}}>+ Create Business</span>
+            </div>
+            <Field label="Business Name *">
+              <input type="text" style={iStyle} placeholder="e.g. Pius Shop" value={newBiz.name} onChange={e=>setNewBiz({...newBiz,name:e.target.value})}/>
+            </Field>
+            <Field label="Industry">
+              <input type="text" style={iStyle} placeholder="Retail, Manufacturing…" value={newBiz.industry} onChange={e=>setNewBiz({...newBiz,industry:e.target.value})}/>
+            </Field>
             <Field label="Currency">
               <select style={iStyle} value={newBiz.currency} onChange={e=>setNewBiz({...newBiz,currency:e.target.value})}>
                 {["USD","TZS","KES","GBP","EUR","ZAR"].map(c=><option key={c}>{c}</option>)}
               </select>
             </Field>
             <Btn onClick={createBusiness} color={C.accent} style={{width:"100%",padding:"11px"}}>Create Business</Btn>
+            <div style={{marginTop:14,padding:"10px 14px",background:C.blue+"10",borderRadius:7,fontSize:12,color:C.blue}}>
+              💡 After creating a business, go to the <strong>🔗 Members</strong> tab to assign employees to it.
+            </div>
           </div>
+
+          {/* Business list */}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>All Businesses ({businesses.length})</div>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>
+              All Businesses ({businesses.length})
+            </div>
             <div style={{display:"grid",gap:10}}>
               {businesses.map(b=>(
                 <div key={b.id} style={{background:C.surface,borderRadius:8,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -316,10 +376,183 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
                     <div style={{fontWeight:600,color:C.text,fontSize:14}}>{b.name}</div>
                     <div style={{fontSize:12,color:C.muted,marginTop:3}}>{b.industry||"General"} · {b.currency} · ID: {b.id}</div>
                   </div>
-                  <DelBtn onClick={()=>setConfirmBiz(b)}/>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <button onClick={()=>{selectBiz(b);setTab("members");}} style={{fontSize:11,padding:"4px 10px",borderRadius:5,border:`1px solid ${C.blue}`,background:C.blue+"18",color:C.blue,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:600}}>
+                      Manage Members →
+                    </button>
+                    <DelBtn onClick={()=>setConfirmBiz(b)}/>
+                  </div>
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MEMBERS TAB ── */}
+      {tab==="members"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+
+          {/* Left — business selector + add member */}
+          <div style={{display:"grid",gap:16}}>
+
+            {/* Pick a business */}
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+              <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+                Select Business
+              </div>
+              <div style={{display:"grid",gap:8}}>
+                {businesses.map(b=>(
+                  <button key={b.id} onClick={()=>selectBiz(b)} style={{
+                    padding:"12px 16px",borderRadius:7,border:`1px solid ${selectedBiz?.id===b.id?C.accent:C.border}`,
+                    background:selectedBiz?.id===b.id?C.accentDim:"transparent",
+                    color:selectedBiz?.id===b.id?C.accent:C.text,
+                    textAlign:"left",cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",
+                    display:"flex",justifyContent:"space-between",alignItems:"center",
+                  }}>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{b.name}</div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{b.industry||"General"} · {b.currency}</div>
+                    </div>
+                    {selectedBiz?.id===b.id && <span style={{fontSize:16}}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Add member form */}
+            {selectedBiz && (
+              <div style={{background:C.card,border:`1px solid ${C.accent}33`,borderRadius:10,padding:24}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:16}}>
+                  <span style={{background:C.accentDim,padding:"4px 12px",borderRadius:6}}>
+                    + Add Employee to {selectedBiz.name}
+                  </span>
+                </div>
+
+                <Field label="Select Employee *">
+                  <select style={iStyle} value={memberToAdd.userId} onChange={e=>setMemberToAdd({...memberToAdd,userId:e.target.value})}>
+                    <option value="">— Choose employee —</option>
+                    {nonMembers.filter(u=>u.is_active).map(u=>(
+                      <option key={u.id} value={u.id}>
+                        {u.full_name} ({u.email}){u.department?` · ${u.department}`:""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Role in this business">
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                    {[["employee","Employee",C.muted],["manager","Manager",C.blue],["admin","Admin",C.accent]].map(([val,label,color])=>(
+                      <button key={val} onClick={()=>setMemberToAdd({...memberToAdd,role:val})} style={{
+                        padding:"9px",borderRadius:6,
+                        border:`1px solid ${memberToAdd.role===val?color:C.border}`,
+                        background:memberToAdd.role===val?color+"22":"transparent",
+                        color:memberToAdd.role===val?color:C.muted,
+                        fontSize:12,fontWeight:600,cursor:"pointer",
+                        fontFamily:"'IBM Plex Sans',sans-serif",
+                      }}>{label}</button>
+                    ))}
+                  </div>
+                </Field>
+
+                {/* Role explanation */}
+                <div style={{background:C.surface,borderRadius:7,padding:"10px 14px",marginBottom:14,fontSize:12,color:C.muted}}>
+                  {memberToAdd.role==="employee" && "Can log sales, expenses and update stock. Sees only their own entries."}
+                  {memberToAdd.role==="manager"  && "Sees all dashboards and entries. Can delete records. Cannot manage users."}
+                  {memberToAdd.role==="admin"    && "Full access including user management and deleting products."}
+                </div>
+
+                <button onClick={addMember} style={{
+                  width:"100%",padding:"11px",borderRadius:7,border:"none",
+                  background:C.accent,color:"#000",fontWeight:700,fontSize:14,cursor:"pointer",
+                  fontFamily:"'IBM Plex Sans',sans-serif",
+                }}>+ Add to {selectedBiz.name}</button>
+
+                {nonMembers.filter(u=>u.is_active).length===0 && (
+                  <div style={{marginTop:12,fontSize:12,color:C.muted,textAlign:"center"}}>
+                    All active users are already members of this business.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right — current members of selected business */}
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+            {!selectedBiz
+              ? (
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,color:C.muted,gap:12}}>
+                  <div style={{fontSize:32}}>🏢</div>
+                  <div style={{fontSize:14}}>Select a business on the left</div>
+                  <div style={{fontSize:12}}>to view and manage its members</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{selectedBiz.name}</div>
+                    <span style={{fontSize:11,color:C.muted}}>{members.length} member{members.length!==1?"s":""}</span>
+                  </div>
+
+                  {members.length === 0
+                    ? (
+                      <div style={{textAlign:"center",padding:32,color:C.muted}}>
+                        <div style={{fontSize:28,marginBottom:8}}>👤</div>
+                        <div>No members yet.</div>
+                        <div style={{fontSize:12,marginTop:4}}>Add employees using the form on the left.</div>
+                      </div>
+                    )
+                    : (
+                      <div style={{display:"grid",gap:10}}>
+                        {confirmMember&&<ConfirmDelete message={`Remove ${confirmMember.name} from ${selectedBiz.name}? They will lose access to this business.`} onConfirm={()=>removeMember(confirmMember.userId)} onCancel={()=>setConfirmMember(null)}/>}
+                        {members.map(m => {
+                          const userInfo = users.find(u=>u.id===m.user_id);
+                          const roleColor = ROLE_COLORS[m.role] || C.muted;
+                          return (
+                            <div key={m.id} style={{background:C.surface,borderRadius:8,padding:"14px 16px",border:`1px solid ${C.border}`}}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                                <div style={{flex:1}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                                    <div style={{width:28,height:28,borderRadius:"50%",background:roleColor+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:roleColor,flexShrink:0}}>
+                                      {(userInfo?.full_name||"?")[0].toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div style={{fontSize:13,fontWeight:600,color:C.text}}>{userInfo?.full_name||`User #${m.user_id}`}</div>
+                                      <div style={{fontSize:11,color:C.muted}}>{userInfo?.email}</div>
+                                    </div>
+                                  </div>
+                                  {userInfo?.department && (
+                                    <div style={{fontSize:11,color:C.dim,marginLeft:36}}>{userInfo.department}</div>
+                                  )}
+                                </div>
+                                <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                                  {/* Inline role change */}
+                                  <select
+                                    value={m.role}
+                                    onChange={async e=>{
+                                      try{
+                                        await apiPost(`/businesses/${selectedBiz.id}/members`,{user_id:m.user_id,role:e.target.value});
+                                        loadMembers(selectedBiz.id);
+                                        showToast(`✓ Role updated to ${e.target.value}`);
+                                      }catch(err){showToast(err.message,C.red);}
+                                    }}
+                                    style={{...iStyle,width:"auto",padding:"4px 8px",fontSize:11,color:roleColor,background:roleColor+"18",border:`1px solid ${roleColor}44`}}
+                                  >
+                                    <option value="employee">Employee</option>
+                                    <option value="manager">Manager</option>
+                                    <option value="admin">Admin</option>
+                                  </select>
+                                  <DelBtn onClick={()=>setConfirmMember({userId:m.user_id,name:userInfo?.full_name||`User #${m.user_id}`})}/>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  }
+                </>
+              )
+            }
           </div>
         </div>
       )}
@@ -963,17 +1196,6 @@ const CashPage = ({bizId, user, userRole}) => {
   const [form, setForm]           = useState({
     date: todayStr(), opening_balance: "", closing_balance: "", notes: ""
   });
-
-  const [confirmBiz, setConfirmBiz]   = useState(null);
-
-  const deleteBusiness = async (id) => {
-    try {
-      await apiPatch(`/businesses/${id}`, {is_active: false});
-      showToast("✓ Business deactivated");
-      onBusinessCreated(null); // trigger refresh
-    } catch(e) { showToast(e.message, C.red); }
-    setConfirmBiz(null);
-  };
 
   const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
