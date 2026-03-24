@@ -1251,7 +1251,7 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
     add:    {color:C.green,  label:"Received"},
     remove: {color:C.red,    label:"Dispatched"},
     adjust: {color:C.accent, label:"Adjusted"},
-  }[t]||{color:C.muted, label:t};
+  })[t] || {color:C.muted, label:t};
 
   return (
     <div>
