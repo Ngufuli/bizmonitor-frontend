@@ -16,9 +16,14 @@ const clearToken = () => localStorage.removeItem("biz_token");
 
 async function apiFetch(path, options = {}) {
   const token = getToken();
+  const { headers: extraHeaders, ...restOptions } = options;
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) },
-    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...(extraHeaders || {}),
+    },
+    ...restOptions,
   });
   if (res.status === 401) { clearToken(); window.location.reload(); }
   if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || `API error ${res.status}`); }
@@ -1669,7 +1674,7 @@ export default function BizMonitor() {
 
   // Load business data
   const loadBizData = useCallback(async()=>{
-    if(!activeBiz) return;
+    if(!activeBiz) { setApiStatus("ok"); return; }
     try{
       const [s,e,inv,sum]=await Promise.all([
         apiGet(`/businesses/${activeBiz.id}/sales`),
@@ -1684,6 +1689,7 @@ export default function BizMonitor() {
 
   useEffect(()=>{
     if(activeBiz){ loadBizData(); const t=setInterval(loadBizData,30000); return()=>clearInterval(t); }
+    else { setApiStatus("ok"); } // admin panel with no business selected
   },[activeBiz,loadBizData]);
 
   const handleLogout=()=>{ clearToken(); setUser(null); setActiveBiz(null); setBusinesses([]); setSales([]); setExpenses([]); setInventory([]); setSummary(null); setApiStatus("loading"); };
