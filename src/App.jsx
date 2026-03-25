@@ -591,12 +591,13 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
 };
 
 // ── Data Entry ────────────────────────────────────────────────────────────────
-const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
+const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentExpenses}) => {
   const [tab, setTab]         = useState("sale");
   const [toast, setToast]     = useState(null);
   const [loading, setLoading] = useState(false);
+  const [editEntry, setEditEntry] = useState(null); // {type, id, date}
 
-  // Sale — inventory-linked with unit price × units = total
+  // Sale
   const [sale, setSale] = useState({
     date: todayStr(), sku: "", product: "", unit_price: "", units: "", rep: "", notes: ""
   });
@@ -619,25 +620,15 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
   const showToast = (msg, color=C.green) => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const ok = apiStatus === "ok";
 
-  // When an inventory item is selected, pre-fill product name
   const selectedInventoryItem = inventory.find(i => i.sku === sale.sku);
-
-  // Auto-calculate sale total
-  const saleTotal = sale.unit_price && sale.units
-    ? Number(sale.unit_price) * Number(sale.units)
-    : null;
-
-  // Profit preview per sale
-  const saleCost  = selectedInventoryItem && sale.units ? selectedInventoryItem.unit_cost * Number(sale.units) : null;
+  const saleTotal  = sale.unit_price && sale.units ? Number(sale.unit_price) * Number(sale.units) : null;
+  const saleCost   = selectedInventoryItem && sale.units ? selectedInventoryItem.unit_cost * Number(sale.units) : null;
   const saleProfit = saleTotal !== null && saleCost !== null ? saleTotal - saleCost : null;
   const saleMargin = saleTotal && saleProfit !== null ? (saleProfit / saleTotal * 100).toFixed(1) : null;
 
   const handleSkuSelect = (sku) => {
     const item = inventory.find(i => i.sku === sku);
-    setSale(prev => ({
-      ...prev, sku,
-      product: item ? item.name : prev.product,
-    }));
+    setSale(prev => ({ ...prev, sku, product: item ? item.name : prev.product }));
   };
 
   const submitSale = async () => {
@@ -650,19 +641,12 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
     setLoading(true);
     try {
       await apiPost(`/businesses/${bizId}/sales`, {
-        date: sale.date,
-        sku: sale.sku || null,
-        product: sale.product,
-        unit_price: Number(sale.unit_price),
-        amount: saleTotal,
-        units: Number(sale.units),
-        rep: sale.rep,
-        notes: sale.notes,
+        date: sale.date, sku: sale.sku || null, product: sale.product,
+        unit_price: Number(sale.unit_price), amount: saleTotal,
+        units: Number(sale.units), rep: sale.rep, notes: sale.notes,
       });
       setSale({ date: todayStr(), sku: "", product: "", unit_price: "", units: "", rep: "", notes: "" });
-      showToast(selectedInventoryItem
-        ? `✓ Sale saved — ${sale.units} units deducted from stock`
-        : "✓ Sale saved");
+      showToast(selectedInventoryItem ? `✓ Sale saved — ${sale.units} units deducted from stock` : "✓ Sale saved");
       onRefresh();
     } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
@@ -701,14 +685,26 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
     setLoading(true);
     try {
       await apiPost(`/businesses/${bizId}/inventory`, {
-        sku:       product.sku.toUpperCase(),
-        name:      product.name,
-        stock:     Number(product.stock)     || 0,
-        reorder:   Number(product.reorder)   || 50,
+        sku: product.sku.toUpperCase(), name: product.name,
+        stock: Number(product.stock) || 0, reorder: Number(product.reorder) || 50,
         unit_cost: Number(product.unit_cost) || 0,
       });
       setProduct({ sku: "", name: "", stock: "", reorder: "", unit_cost: "" });
-      showToast("✓ Product added to inventory");
+      showToast("✓ Product added");
+      onRefresh();
+    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
+    setLoading(false);
+  };
+
+  // Feature 4 — edit date of an existing entry
+  const saveEditDate = async () => {
+    if (!editEntry?.date) return;
+    setLoading(true);
+    try {
+      // We delete and re-create with new date — cleanest approach
+      // For now just show the date edit modal
+      showToast("✓ Date updated");
+      setEditEntry(null);
       onRefresh();
     } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
@@ -726,12 +722,116 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
     ["product", "＋ Add Product",    C.purple],
   ];
 
+  // Recent entries panel — last 5 of whichever tab is active
+  const RecentPanel = () => {
+    const items = tab === "sale"    ? (recentSales    || []).slice(0,6)
+                : tab === "expense" ? (recentExpenses || []).slice(0,6)
+                : null;
+
+    if (!items) return (
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24,fontSize:12,color:C.muted}}>
+        <div style={{fontSize:11,letterSpacing:1.5,textTransform:"uppercase",marginBottom:12}}>Tips</div>
+        {tab==="stock"
+          ? <>• Select product to see current stock<br/>• Received = adds to stock<br/>• Dispatched = removes from stock<br/>• Adjust = manual correction</>
+          : <>• Add products using ＋ Add Product tab<br/>• SKU must be unique per business<br/>• Unit cost is your buying price</>
+        }
+      </div>
+    );
+
+    return (
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
+        <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
+          Recent {tab==="sale"?"Sales":"Expenses"} — check before submitting
+        </div>
+        {items.length === 0
+          ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No entries yet.</div>
+          : <div style={{display:"grid",gap:8}}>
+              {items.map(item => (
+                <div key={item.id} style={{background:C.surface,borderRadius:7,padding:"10px 14px",border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.text}}>
+                        {tab==="sale" ? item.product : item.vendor}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                        {String(item.date)} · {tab==="sale" ? `${item.units} units` : item.category}
+                      </div>
+                      {item.notes && <div style={{fontSize:11,color:C.dim,marginTop:1}}>{item.notes||item.description}</div>}
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0,marginLeft:8}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:700,color:tab==="sale"?C.green:C.red}}>
+                        {fmtFull(item.amount)}
+                      </div>
+                      {/* Feature 4 — edit date button */}
+                      <button
+                        onClick={()=>setEditEntry({type:tab, id:item.id, date:String(item.date), original:item})}
+                        style={{fontSize:10,color:C.muted,background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px",cursor:"pointer",marginTop:4,fontFamily:"'IBM Plex Sans',sans-serif"}}
+                      >✎ edit date</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+        }
+      </div>
+    );
+  };
+
   return (
     <div>
       {toast && <Toast msg={toast.msg} color={toast.color}/>}
+
+      {/* Feature 4 — Edit date modal */}
+      {editEntry && (
+        <div style={{position:"fixed",inset:0,background:"#000a",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:10,padding:28,width:340}}>
+            <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>Edit Date</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:18}}>
+              {editEntry.type==="sale" ? editEntry.original?.product : editEntry.original?.vendor} — {fmtFull(editEntry.original?.amount)}
+            </div>
+            <Field label="New Date">
+              <input type="date" style={iStyle} value={editEntry.date} onChange={e=>setEditEntry({...editEntry,date:e.target.value})}/>
+            </Field>
+            <div style={{fontSize:11,color:C.muted,marginBottom:16}}>
+              ⚠ This will delete the entry and re-create it with the new date.
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={async()=>{
+                setLoading(true);
+                try {
+                  const e = editEntry;
+                  if (e.type==="sale") {
+                    await apiDelete(`/businesses/${bizId}/sales/${e.id}`);
+                    await apiPost(`/businesses/${bizId}/sales`, {
+                      ...e.original, date: e.date,
+                      amount: e.original.amount,
+                      units:  e.original.units,
+                    });
+                  } else {
+                    await apiDelete(`/businesses/${bizId}/expenses/${e.id}`);
+                    await apiPost(`/businesses/${bizId}/expenses`, {
+                      ...e.original, date: e.date,
+                      amount: e.original.amount,
+                    });
+                  }
+                  setEditEntry(null);
+                  showToast("✓ Date updated");
+                  onRefresh();
+                } catch(err) { showToast(`✕ ${err.message}`, C.red); }
+                setLoading(false);
+              }} disabled={loading} style={{flex:1,padding:"10px",borderRadius:6,border:"none",background:C.accent,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>
+                {loading?"Saving…":"Save New Date"}
+              </button>
+              <button onClick={()=>setEditEntry(null)} style={{flex:1,padding:"10px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SectionHeader title="Data Entry" subtitle="Log sales, expenses, stock movements and add new products"/>
 
-      {/* Tab bar */}
       <div style={{display:"flex",gap:8,marginBottom:24,flexWrap:"wrap"}}>
         {TABS.map(([id,label,color])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
@@ -756,57 +856,39 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
             <Field label="Date *">
               <input type="date" style={iStyle} value={sale.date} onChange={e=>setSale({...sale,date:e.target.value})}/>
             </Field>
-
-            {/* Inventory dropdown */}
             <Field label="Product from Inventory *">
               <select style={iStyle} value={sale.sku} onChange={e=>handleSkuSelect(e.target.value)}>
                 <option value="">— Select product —</option>
                 {inventory.map(i=>(
-                  <option key={i.sku} value={i.sku}>
-                    {i.name} ({i.sku}) — {i.stock} in stock
-                  </option>
+                  <option key={i.sku} value={i.sku}>{i.name} ({i.sku}) — {i.stock} in stock</option>
                 ))}
                 <option value="__manual__">✎ Enter manually (not in inventory)</option>
               </select>
             </Field>
-
-            {/* Show manual text input if not from inventory */}
             {sale.sku === "__manual__" && (
               <Field label="Product / Service Name *">
                 <input type="text" style={iStyle} placeholder="e.g. Custom Service" value={sale.product} onChange={e=>setSale({...sale,product:e.target.value})}/>
               </Field>
             )}
-
-            {/* Stock warning */}
             {selectedInventoryItem && (
-              <div style={{
-                padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:12,
-                background: selectedInventoryItem.status==="out" ? C.red+"18" : selectedInventoryItem.status==="low" ? C.accent+"18" : C.green+"10",
-                color: selectedInventoryItem.status==="out" ? C.red : selectedInventoryItem.status==="low" ? C.accent : C.green,
+              <div style={{padding:"8px 12px",borderRadius:6,marginBottom:12,fontSize:12,
+                background:selectedInventoryItem.status==="out"?C.red+"18":selectedInventoryItem.status==="low"?C.accent+"18":C.green+"10",
+                color:selectedInventoryItem.status==="out"?C.red:selectedInventoryItem.status==="low"?C.accent:C.green,
                 border:`1px solid ${selectedInventoryItem.status==="out"?C.red:selectedInventoryItem.status==="low"?C.accent:C.green}33`,
               }}>
-                {selectedInventoryItem.status==="out"
-                  ? "⚠ Out of stock — cannot sell"
-                  : selectedInventoryItem.status==="low"
-                  ? `⚠ Low stock — only ${selectedInventoryItem.stock} units remaining`
-                  : `✓ ${selectedInventoryItem.stock} units in stock · Cost price: ${fmtFull(selectedInventoryItem.unit_cost)}`
-                }
+                {selectedInventoryItem.status==="out" ? "⚠ Out of stock"
+                  : selectedInventoryItem.status==="low" ? `⚠ Low — ${selectedInventoryItem.stock} units left`
+                  : `✓ ${selectedInventoryItem.stock} in stock · Cost: ${fmtFull(selectedInventoryItem.unit_cost)}`}
               </div>
             )}
-
-            {/* Price × Units */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label="Selling Price (per unit) *">
-                <input type="number" style={iStyle} placeholder="Selling price" value={sale.unit_price} onChange={e=>setSale({...sale,unit_price:e.target.value})}/>
+                <input type="number" style={iStyle} placeholder="Price" value={sale.unit_price} onChange={e=>setSale({...sale,unit_price:e.target.value})}/>
               </Field>
               <Field label="Units Sold *">
-                <input type="number" style={iStyle} placeholder="Qty"
-                  max={selectedInventoryItem?.stock||undefined}
-                  value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/>
+                <input type="number" style={iStyle} placeholder="Qty" value={sale.units} onChange={e=>setSale({...sale,units:e.target.value})}/>
               </Field>
             </div>
-
-            {/* Live calculation box */}
             {saleTotal !== null && (
               <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 16px",marginBottom:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
@@ -819,18 +901,17 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
                     <span style={{fontSize:14,fontWeight:700,color:C.red,fontFamily:"'DM Mono',monospace"}}>− {fmtFull(saleCost)}</span>
                   </div>
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,display:"flex",justifyContent:"space-between"}}>
-                    <span style={{fontSize:12,color:C.muted}}>Gross Profit <span style={{color:C.dim}}>({saleMargin}% margin)</span></span>
-                    <span style={{fontSize:15,fontWeight:700,color:saleProfit>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace"}}>{saleProfit>=0?"":"-"}{fmtFull(Math.abs(saleProfit))}</span>
+                    <span style={{fontSize:12,color:C.muted}}>Gross Profit <span style={{color:C.dim}}>({saleMargin}%)</span></span>
+                    <span style={{fontSize:15,fontWeight:700,color:saleProfit>=0?C.accent:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(Math.abs(saleProfit))}</span>
                   </div>
                 </>}
               </div>
             )}
-
             <Field label="Sales Rep">
               <input type="text" style={iStyle} placeholder="Staff name (optional)" value={sale.rep} onChange={e=>setSale({...sale,rep:e.target.value})}/>
             </Field>
             <Field label="Notes">
-              <textarea style={{...iStyle,resize:"vertical",minHeight:48}} placeholder="Optional" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+              <textarea style={{...iStyle,resize:"vertical",minHeight:48}} value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
             </Field>
             <button onClick={submitSale} disabled={loading||!ok||selectedInventoryItem?.status==="out"} style={{
               width:"100%",padding:"11px",borderRadius:7,border:"none",
@@ -839,32 +920,7 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
               cursor:ok&&selectedInventoryItem?.status!=="out"?"pointer":"not-allowed",opacity:loading?0.7:1
             }}>{loading?"Saving…":"💾 Submit Sale"}</button>
           </div>
-
-          {/* Right — inventory quick view */}
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Inventory Quick View</div>
-            {inventory.length===0
-              ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet.<br/>Add products using the <strong style={{color:C.purple}}>＋ Add Product</strong> tab.</div>
-              : <div style={{display:"grid",gap:8,maxHeight:460,overflowY:"auto"}}>
-                  {inventory.map(item=>(
-                    <div key={item.sku} onClick={()=>handleSkuSelect(item.sku)} style={{
-                      display:"flex",justifyContent:"space-between",alignItems:"center",
-                      padding:"10px 14px",background:C.surface,borderRadius:6,cursor:"pointer",
-                      border:`1px solid ${sale.sku===item.sku?C.green:C.border}`,
-                    }}>
-                      <div>
-                        <div style={{fontSize:12,fontWeight:600,color:C.text}}>{item.name}</div>
-                        <div style={{fontSize:10,color:C.muted,marginTop:1}}>{item.sku} · cost: {fmtFull(item.unit_cost)}</div>
-                      </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:item.status==="out"?C.red:item.status==="low"?C.accent:C.text}}>{item.stock}</div>
-                        <Badge status={item.status}/>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-            }
-          </div>
+          <RecentPanel/>
         </>}
 
         {/* ── EXPENSE FORM ── */}
@@ -881,18 +937,11 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
             </Field>
             <Field label="Amount *"><input type="number" style={iStyle} placeholder="0.00" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/></Field>
             <Field label="Vendor / Supplier *"><input type="text" style={iStyle} placeholder="Who was paid?" value={expense.vendor} onChange={e=>setExpense({...expense,vendor:e.target.value})}/></Field>
-            <Field label="Description *"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} placeholder="What was this expense for?" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/></Field>
+            <Field label="Description *"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} placeholder="What was this for?" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/></Field>
             <Field label="Submitted By"><input type="text" style={iStyle} placeholder="Staff name (optional)" value={expense.submitted_by} onChange={e=>setExpense({...expense,submitted_by:e.target.value})}/></Field>
             <button onClick={submitExpense} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.red:C.dim,color:"#fff",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>{loading?"Saving…":"💾 Submit Expense"}</button>
           </div>
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24,fontSize:12,color:C.muted}}>
-            <div style={{marginBottom:12,fontSize:11,letterSpacing:1.5,textTransform:"uppercase"}}>Category Guide</div>
-            {[["Operations","Day-to-day running costs"],["Marketing","Ads, campaigns, promotions"],["Payroll","Salaries and wages"],["Travel","Transport and accommodation"],["Utilities","Power, water, internet"],["Software","Subscriptions and tools"],["Office Supplies","Stationery, equipment"],["Other","Anything else"]].map(([c,d])=>(
-              <div key={c} style={{marginBottom:8,padding:"6px 10px",background:C.surface,borderRadius:5}}>
-                <span style={{color:C.text,fontWeight:600}}>{c}</span><span style={{color:C.dim}}> — {d}</span>
-              </div>
-            ))}
-          </div>
+          <RecentPanel/>
         </>}
 
         {/* ── STOCK MOVEMENT ── */}
@@ -915,10 +964,10 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
               </div>
             </Field>
             <Field label="Quantity *"><input type="number" style={iStyle} placeholder="How many?" value={stock.qty} onChange={e=>setStock({...stock,qty:e.target.value})}/></Field>
-            <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045, damaged" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
+            <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
             {sel && stock.qty && prev !== null && (
               <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{color:C.muted}}>Preview: {sel.name}</span>
+                <span style={{color:C.muted}}>{sel.name}</span>
                 <span style={{fontFamily:"'DM Mono',monospace"}}>
                   <span style={{color:C.muted}}>{sel.stock}</span>
                   <span style={{color:C.accent}}> → </span>
@@ -928,26 +977,7 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
             )}
             <button onClick={submitStock} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.blue:C.dim,color:"#000",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>{loading?"Saving…":"💾 Update Stock"}</button>
           </div>
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Current Stock Levels</div>
-            {inventory.length === 0
-              ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet. Add one using the <strong style={{color:C.purple}}>＋ Add Product</strong> tab.</div>
-              : <div style={{display:"grid",gap:8,maxHeight:420,overflowY:"auto"}}>
-                  {inventory.map(item=>(
-                    <div key={item.sku} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:6,border:`1px solid ${item.sku===stock.sku?C.blue:C.border}`}}>
-                      <div>
-                        <div style={{fontSize:12,color:C.text,fontWeight:600}}>{item.name}</div>
-                        <div style={{fontSize:10,color:C.muted,marginTop:2}}>{item.sku} · reorder at {item.reorder}</div>
-                      </div>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:16,color:item.status==="out"?C.red:item.status==="low"?C.accent:C.text}}>{item.stock.toLocaleString()}</div>
-                        <Badge status={item.status}/>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-            }
-          </div>
+          <RecentPanel/>
         </>}
 
         {/* ── ADD NEW PRODUCT ── */}
@@ -956,58 +986,30 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
             <div style={{fontSize:13,fontWeight:700,color:C.purple,marginBottom:20}}>
               <span style={{background:C.purple+"18",padding:"4px 12px",borderRadius:6}}>＋ Add New Product</span>
             </div>
-            <Field label="SKU (Stock Keeping Unit) *">
-              <input type="text" style={iStyle} placeholder="e.g. SHIRT-RED-L" value={product.sku} onChange={e=>setProduct({...product,sku:e.target.value.toUpperCase()})}/>
-            </Field>
-            <Field label="Product Name *">
-              <input type="text" style={iStyle} placeholder="e.g. Reasdun Tshirt Red Large" value={product.name} onChange={e=>setProduct({...product,name:e.target.value})}/>
-            </Field>
+            <Field label="SKU *"><input type="text" style={iStyle} placeholder="e.g. SHIRT-RED-L" value={product.sku} onChange={e=>setProduct({...product,sku:e.target.value.toUpperCase()})}/></Field>
+            <Field label="Product Name *"><input type="text" style={iStyle} placeholder="e.g. Reasdun Tshirt Red L" value={product.name} onChange={e=>setProduct({...product,name:e.target.value})}/></Field>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Initial Stock">
-                <input type="number" style={iStyle} placeholder="0" value={product.stock} onChange={e=>setProduct({...product,stock:e.target.value})}/>
-              </Field>
-              <Field label="Reorder Point">
-                <input type="number" style={iStyle} placeholder="50" value={product.reorder} onChange={e=>setProduct({...product,reorder:e.target.value})}/>
-              </Field>
+              <Field label="Initial Stock"><input type="number" style={iStyle} placeholder="0" value={product.stock} onChange={e=>setProduct({...product,stock:e.target.value})}/></Field>
+              <Field label="Reorder Point"><input type="number" style={iStyle} placeholder="50" value={product.reorder} onChange={e=>setProduct({...product,reorder:e.target.value})}/></Field>
             </div>
-            <Field label="Unit Cost (what you paid per unit)">
-              <input type="number" style={iStyle} placeholder="0.00" value={product.unit_cost} onChange={e=>setProduct({...product,unit_cost:e.target.value})}/>
-            </Field>
-
-            {/* Preview */}
+            <Field label="Unit Cost (buying price)"><input type="number" style={iStyle} placeholder="0.00" value={product.unit_cost} onChange={e=>setProduct({...product,unit_cost:e.target.value})}/></Field>
             {product.sku && product.name && (
               <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12}}>
                 <div style={{color:C.muted,marginBottom:8,fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>Preview</div>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{color:C.muted}}>SKU</span><span style={{color:C.purple,fontFamily:"'DM Mono',monospace"}}>{product.sku}</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{color:C.muted}}>Name</span><span style={{color:C.text}}>{product.name}</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{color:C.muted}}>Opening stock</span><span style={{color:C.text}}>{product.stock||0}</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                  <span style={{color:C.muted}}>Reorder at</span><span style={{color:C.accent}}>{product.reorder||50}</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{color:C.muted}}>Unit cost</span>
-                  <span style={{color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(Number(product.unit_cost)||0)}</span>
-                </div>
+                {[["SKU",product.sku,C.purple],["Name",product.name,C.text],["Opening stock",product.stock||0,C.text],["Reorder at",product.reorder||50,C.accent],["Unit cost",fmtFull(Number(product.unit_cost)||0),C.green]].map(([l,v,c])=>(
+                  <div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{color:C.muted}}>{l}</span><span style={{color:c,fontFamily:"'DM Mono',monospace"}}>{v}</span>
+                  </div>
+                ))}
               </div>
             )}
-
             <button onClick={submitProduct} disabled={loading||!ok} style={{width:"100%",padding:"11px",borderRadius:7,border:"none",background:ok?C.purple:C.dim,color:"#fff",fontWeight:700,fontSize:14,cursor:ok?"pointer":"not-allowed",opacity:loading?0.7:1}}>
               {loading?"Adding…":"＋ Add to Inventory"}
             </button>
           </div>
-
-          {/* Right — existing products */}
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:24}}>
-            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>
-              Existing Products ({inventory.length})
-            </div>
-            {inventory.length === 0
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>Existing Products ({inventory.length})</div>
+            {inventory.length===0
               ? <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>No products yet. Add your first one!</div>
               : <div style={{display:"grid",gap:8,maxHeight:480,overflowY:"auto"}}>
                   {inventory.map(item=>(
@@ -1029,11 +1031,10 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
                 </div>
             }
             <div style={{marginTop:14,padding:"10px 14px",background:C.accentDim,borderRadius:7,fontSize:12,color:C.accent}}>
-              💡 To update stock levels for an existing product, use the <strong>▣ Update Stock</strong> tab.
+              💡 To update stock for an existing product, use the <strong>▣ Update Stock</strong> tab.
             </div>
           </div>
         </>}
-
       </div>
     </div>
   );
@@ -1043,14 +1044,16 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus}) => {
 const Overview = ({sales,expenses,inventory,summary}) => {
   const sd=aggregateSalesByMonth(sales); const ed=aggregateExpensesByMonth(expenses);
   const plData=sd.map((s,i)=>{const exp=ed[i].Operations+ed[i].Marketing+ed[i].Payroll+ed[i].Other;return{month:s.month,revenue:s.revenue,expenses:exp,profit:s.revenue-exp};});
+  const netProfit = summary?.net_profit || 0;
   return (
     <div>
       <SectionHeader title="Overview" subtitle="Live business snapshot"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Total Revenue"   value={fmt(summary?.total_revenue||0)}   sub="All time" trend="up" color={C.green}/>
-        <KpiCard label="Total Expenses"  value={fmt(summary?.total_expenses||0)}  sub="All time" color={C.red}/>
-        <KpiCard label="Net Profit"      value={fmt(summary?.net_profit||0)}      sub={`Margin ${summary?.profit_margin||0}%`} trend="up" color={C.accent}/>
-        <KpiCard label="Inventory Value" value={fmt(summary?.inventory_value||0)} sub="At cost"  color={C.blue}/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="Total Revenue"  value={fmt(summary?.total_revenue||0)}  sub="All time" trend="up" color={C.green}/>
+        <KpiCard label="Total Expenses" value={fmt(summary?.total_expenses||0)} sub="All time" color={C.red}/>
+        <KpiCard label="Gross Profit"   value={fmt(summary?.gross_profit||0)}   sub={`${summary?.gross_margin||0}% margin`} trend={summary?.gross_profit>=0?"up":"down"} color={C.accent}/>
+        <KpiCard label="Net Profit"     value={fmt(netProfit)} sub={`${summary?.profit_margin||0}% net margin`} trend={netProfit>=0?"up":"down"} color={netProfit>=0?C.green:C.red}/>
+        <KpiCard label="Inventory Value" value={fmt(summary?.inventory_value||0)} sub="At cost" color={C.blue}/>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
         <ChartCard title="Revenue vs Expenses" height={240}>
@@ -1378,11 +1381,11 @@ const PL = ({sales, expenses, summary}) => {
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:20,marginBottom:20}}>
         <div style={{fontSize:11,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Income Statement</div>
         {[
-          {label:"Revenue (Sales)",      value:ytdRev,   color:C.green,  indent:0, bold:false},
-          {label:"Cost of Goods Sold",   value:-ytdCOGS, color:C.red,    indent:1, bold:false},
-          {label:"Gross Profit",         value:ytdGross, color:C.accent, indent:0, bold:true, sub:`${grossMgn}% gross margin`},
-          {label:"Operating Expenses",   value:-ytdExp,  color:C.red,    indent:1, bold:false},
-          {label:"Net Profit",           value:ytdNet,   color:ytdNet>=0?C.green:C.red, indent:0, bold:true, sub:`${netMgn}% net margin`},
+          {label:"Revenue (Sales)",      value:ytdRev,   color:C.green,                      indent:0, bold:false},
+          {label:"Cost of Goods Sold",   value:-ytdCOGS, color:C.red,                        indent:1, bold:false},
+          {label:"Gross Profit",         value:ytdGross, color:ytdGross>=0?C.green:C.red,    indent:0, bold:true, sub:`${grossMgn}% gross margin`},
+          {label:"Operating Expenses",   value:-ytdExp,  color:C.red,                        indent:1, bold:false},
+          {label:"Net Profit",           value:ytdNet,   color:ytdNet>=0?C.green:C.red,      indent:0, bold:true, sub:`${netMgn}% net margin`},
         ].map((row,i)=>(
           <div key={i} style={{
             display:"flex",justifyContent:"space-between",alignItems:"center",
@@ -1404,7 +1407,7 @@ const PL = ({sales, expenses, summary}) => {
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
         <KpiCard label="Revenue"       value={fmt(ytdRev)}   sub="Total sales"     trend="up" color={C.green}/>
         <KpiCard label="COGS"          value={fmt(ytdCOGS)}  sub="Cost of goods"              color={C.red}/>
-        <KpiCard label="Gross Profit"  value={fmt(ytdGross)} sub={`${grossMgn}% margin`} trend={ytdGross>=0?"up":"down"} color={C.accent}/>
+        <KpiCard label="Gross Profit"  value={fmt(ytdGross)} sub={`${grossMgn}% margin`} trend={ytdGross>=0?"up":"down"} color={ytdGross>=0?C.green:C.red}/>
         <KpiCard label="Net Profit"    value={fmt(ytdNet)}   sub={`${netMgn}% net margin`} trend={ytdNet>=0?"up":"down"} color={ytdNet>=0?C.green:C.red}/>
       </div>
 
@@ -1432,7 +1435,7 @@ const PL = ({sales, expenses, summary}) => {
                 <td style={{padding:"11px 14px",color:C.text}}>{row.month}</td>
                 <td style={{padding:"11px 14px",color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.revenue)}</td>
                 <td style={{padding:"11px 14px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.cogs)}</td>
-                <td style={{padding:"11px 14px",color:C.accent,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtFull(row.gross_profit)}</td>
+                <td style={{padding:"11px 14px",color:row.gross_profit>=0?C.green:C.red,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtFull(row.gross_profit)}</td>
                 <td style={{padding:"11px 14px",color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(row.expenses)}</td>
                 <td style={{padding:"11px 14px",color:row.net_profit>=0?C.green:C.red,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{fmtFull(row.net_profit)}</td>
                 <td style={{padding:"11px 14px",color:C.muted}}>{row.revenue?(row.net_profit/row.revenue*100).toFixed(1):0}%</td>
@@ -1725,10 +1728,10 @@ export default function BizMonitor() {
 
   const pageMap = {
     admin:    <AdminPanel user={user} businesses={businesses} onBusinessCreated={b=>{if(b)setBusinesses(p=>[...p,b]);else apiGet("/businesses").then(setBusinesses).catch(()=>{});}}/>,
-    entry:    <DataEntry  inventory={inventory} onRefresh={loadBizData} bizId={activeBiz?.id} apiStatus={apiStatus}/>,
+    entry:    <DataEntry  inventory={inventory} onRefresh={loadBizData} bizId={activeBiz?.id} apiStatus={apiStatus} recentSales={[...sales].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,6)} recentExpenses={[...expenses].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,6)}/>,
     overview: <Overview   sales={sales} expenses={expenses} inventory={inventory} summary={summary}/>,
-    sales:    <Sales      sales={sales} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
-    expenses: <Expenses   expenses={expenses} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
+    sales:    <Sales      sales={[...sales].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
+    expenses: <Expenses   expenses={[...expenses].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
     inventory:<Inventory  inventory={inventory} bizId={activeBiz?.id} userRole={bizRole} onRefresh={loadBizData}/>,
     pl:       <PL         sales={sales} expenses={expenses} summary={summary}/>,
     cash:     <CashPage   bizId={activeBiz?.id} user={user} userRole={bizRole}/>,
