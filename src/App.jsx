@@ -34,8 +34,8 @@ const apiPost   = (p, b) => apiFetch(p, { method:"POST",   body:JSON.stringify(b
 const apiPatch  = (p, b) => apiFetch(p, { method:"PATCH",  body:JSON.stringify(b) });
 const apiDelete = p      => apiFetch(p, { method:"DELETE" });
 
-const fmt     = n => n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1000?`$${(n/1000).toFixed(0)}K`:`$${n}`;
-const fmtFull = n => `$${Number(n).toLocaleString()}`;
+const fmt     = n => `${Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+const fmtFull = n => `${Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const todayStr = () => new Date().toISOString().split("T")[0];
 const timeAgo  = d => { const s=Math.floor((Date.now()-new Date(d))/1000); return s<60?`${s}s ago`:s<3600?`${Math.floor(s/60)}m ago`:s<86400?`${Math.floor(s/3600)}h ago`:`${Math.floor(s/86400)}d ago`; };
 
@@ -609,7 +609,7 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
 
   // Stock movement
   const [stock, setStock] = useState({
-    sku: "", qty: "", movement_type: "add", reason: "", received_by: ""
+    sku: "", qty: "", movement_type: "add", reason: "", received_by: "", date: todayStr(), new_unit_cost: ""
   });
 
   // Add new product
@@ -671,10 +671,11 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
     try {
       await apiPatch(`/businesses/${bizId}/inventory/${stock.sku}/stock`, {
         movement_type: stock.movement_type, qty: Number(stock.qty),
-        reason: stock.reason, received_by: stock.received_by
+        reason: stock.reason, received_by: stock.received_by,
+        new_unit_cost: stock.new_unit_cost ? Number(stock.new_unit_cost) : null,
       });
-      setStock({ sku: "", qty: "", movement_type: "add", reason: "", received_by: "" });
-      showToast("✓ Stock updated");
+      setStock({ sku: "", qty: "", movement_type: "add", reason: "", received_by: "", date: todayStr(), new_unit_cost: "" });
+      showToast("✓ Stock updated" + (stock.new_unit_cost ? " · Unit cost updated" : ""));
       onRefresh();
     } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
@@ -691,20 +692,6 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
       });
       setProduct({ sku: "", name: "", stock: "", reorder: "", unit_cost: "" });
       showToast("✓ Product added");
-      onRefresh();
-    } catch(e) { showToast(`✕ ${e.message}`, C.red); }
-    setLoading(false);
-  };
-
-  // Feature 4 — edit date of an existing entry
-  const saveEditDate = async () => {
-    if (!editEntry?.date) return;
-    setLoading(true);
-    try {
-      // We delete and re-create with new date — cleanest approach
-      // For now just show the date edit modal
-      showToast("✓ Date updated");
-      setEditEntry(null);
       onRefresh();
     } catch(e) { showToast(`✕ ${e.message}`, C.red); }
     setLoading(false);
@@ -793,7 +780,7 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
               <input type="date" style={iStyle} value={editEntry.date} onChange={e=>setEditEntry({...editEntry,date:e.target.value})}/>
             </Field>
             <div style={{fontSize:11,color:C.muted,marginBottom:16}}>
-              ⚠ This will delete the entry and re-create it with the new date.
+              ⚠ This will update the date only. Inventory stock levels will not change.
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={async()=>{
@@ -802,20 +789,31 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
                   const e = editEntry;
                   if (e.type==="sale") {
                     await apiDelete(`/businesses/${bizId}/sales/${e.id}`);
+                    // Pass sku as null so backend does NOT deduct inventory again
                     await apiPost(`/businesses/${bizId}/sales`, {
-                      ...e.original, date: e.date,
-                      amount: e.original.amount,
-                      units:  e.original.units,
+                      date:       e.date,
+                      sku:        null,           // ← prevents inventory deduction
+                      product:    e.original.product,
+                      unit_price: e.original.unit_price,
+                      unit_cost:  e.original.unit_cost,
+                      amount:     e.original.amount,
+                      units:      e.original.units,
+                      rep:        e.original.rep,
+                      notes:      e.original.notes,
                     });
                   } else {
                     await apiDelete(`/businesses/${bizId}/expenses/${e.id}`);
                     await apiPost(`/businesses/${bizId}/expenses`, {
-                      ...e.original, date: e.date,
-                      amount: e.original.amount,
+                      date:         e.date,
+                      category:     e.original.category,
+                      amount:       e.original.amount,
+                      vendor:       e.original.vendor,
+                      description:  e.original.description,
+                      submitted_by: e.original.submitted_by,
                     });
                   }
                   setEditEntry(null);
-                  showToast("✓ Date updated");
+                  showToast("✓ Date updated — inventory unchanged");
                   onRefresh();
                 } catch(err) { showToast(`✕ ${err.message}`, C.red); }
                 setLoading(false);
@@ -950,6 +948,9 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
             <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:20}}>
               <span style={{background:C.blue+"18",padding:"4px 12px",borderRadius:6}}>▣ Stock Movement</span>
             </div>
+            <Field label="Date *">
+              <input type="date" style={iStyle} value={stock.date||todayStr()} onChange={e=>setStock({...stock,date:e.target.value})}/>
+            </Field>
             <Field label="Product *">
               <select style={iStyle} value={stock.sku} onChange={e=>setStock({...stock,sku:e.target.value})}>
                 <option value="">— Select product —</option>
@@ -964,7 +965,12 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
               </div>
             </Field>
             <Field label="Quantity *"><input type="number" style={iStyle} placeholder="How many?" value={stock.qty} onChange={e=>setStock({...stock,qty:e.target.value})}/></Field>
-            <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
+            {stock.movement_type === "add" && (
+              <Field label="Update Unit Cost (optional)">
+                <input type="number" style={iStyle} placeholder={sel ? `Current: ${fmtFull(sel.unit_cost)}` : "Leave blank to keep current"} value={stock.new_unit_cost||""} onChange={e=>setStock({...stock,new_unit_cost:e.target.value})}/>
+              </Field>
+            )}
+            <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045, supplier name" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
             {sel && stock.qty && prev !== null && (
               <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:14,fontSize:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{color:C.muted}}>{sel.name}</span>
@@ -1041,20 +1047,68 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
 };
 
 // ── Dashboard Pages ───────────────────────────────────────────────────────────
-const Overview = ({sales,expenses,inventory,summary}) => {
-  const sd=aggregateSalesByMonth(sales); const ed=aggregateExpensesByMonth(expenses);
-  const plData=sd.map((s,i)=>{const exp=ed[i].Operations+ed[i].Marketing+ed[i].Payroll+ed[i].Other;return{month:s.month,revenue:s.revenue,expenses:exp,profit:s.revenue-exp};});
-  const netProfit = summary?.net_profit || 0;
+const Overview = ({sales, expenses, inventory, summary}) => {
+  const [period, setPeriod] = useState("all");
+  const now = new Date();
+
+  const filterByDate = (items, dateField="date") => {
+    if (period==="all") return items;
+    return items.filter(item => {
+      const d = new Date(item[dateField]);
+      if (period==="week")  { const w=new Date(now); w.setDate(w.getDate()-7); return d>=w; }
+      if (period==="month") { return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }
+      if (period==="year")  { return d.getFullYear()===now.getFullYear(); }
+      return true;
+    });
+  };
+
+  const fSales    = filterByDate(sales);
+  const fExpenses = filterByDate(expenses);
+
+  const totalRevenue  = fSales.reduce((s,d)=>s+d.amount, 0);
+  const totalCOGS     = fSales.reduce((s,d)=>s+(d.unit_cost||0)*d.units, 0);
+  const grossProfit   = totalRevenue - totalCOGS;
+  const totalExpenses = fExpenses.reduce((s,d)=>s+d.amount, 0);
+  const netProfit     = grossProfit - totalExpenses;
+  const totalUnits    = fSales.reduce((s,d)=>s+d.units, 0);
+  const invValue      = inventory.reduce((s,i)=>s+i.stock*i.unit_cost, 0);
+  const grossMargin   = totalRevenue ? (grossProfit/totalRevenue*100).toFixed(1) : 0;
+  const netMargin     = totalRevenue ? (netProfit/totalRevenue*100).toFixed(1)   : 0;
+
+  const sd = aggregateSalesByMonth(fSales);
+  const ed = aggregateExpensesByMonth(fExpenses);
+  const plData = sd.map((s,i)=>{const exp=ed[i].Operations+ed[i].Marketing+ed[i].Payroll+ed[i].Other;return{month:s.month,revenue:s.revenue,expenses:exp,profit:s.revenue-exp};});
+
+  const PERIODS = [["all","All Time"],["year","This Year"],["month","This Month"],["week","This Week"]];
+
   return (
     <div>
       <SectionHeader title="Overview" subtitle="Live business snapshot"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Total Revenue"  value={fmt(summary?.total_revenue||0)}  sub="All time" trend="up" color={C.green}/>
-        <KpiCard label="Total Expenses" value={fmt(summary?.total_expenses||0)} sub="All time" color={C.red}/>
-        <KpiCard label="Gross Profit"   value={fmt(summary?.gross_profit||0)}   sub={`${summary?.gross_margin||0}% margin`} trend={summary?.gross_profit>=0?"up":"down"} color={C.accent}/>
-        <KpiCard label="Net Profit"     value={fmt(netProfit)} sub={`${summary?.profit_margin||0}% net margin`} trend={netProfit>=0?"up":"down"} color={netProfit>=0?C.green:C.red}/>
-        <KpiCard label="Inventory Value" value={fmt(summary?.inventory_value||0)} sub="At cost" color={C.blue}/>
+
+      {/* Period filter */}
+      <div style={{display:"flex",gap:8,marginBottom:18}}>
+        {PERIODS.map(([val,label])=>(
+          <button key={val} onClick={()=>setPeriod(val)} style={{
+            padding:"7px 16px",borderRadius:6,fontSize:12,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",fontWeight:period===val?700:400,
+            border:`1px solid ${period===val?C.accent:C.border}`,
+            background:period===val?C.accentDim:"transparent",
+            color:period===val?C.accent:C.muted,
+          }}>{label}</button>
+        ))}
       </div>
+
+      {/* KPI Cards */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:12}}>
+        <KpiCard label="Total Revenue"   value={fmtFull(totalRevenue)}  sub={period==="all"?"All time":period} trend="up" color={C.green}/>
+        <KpiCard label="Total Expenses"  value={fmtFull(totalExpenses)} sub={period==="all"?"All time":period} color={C.red}/>
+        <KpiCard label="Gross Profit"    value={fmtFull(grossProfit)}   sub={`${grossMargin}% margin`} trend={grossProfit>=0?"up":"down"} color={grossProfit>=0?C.green:C.red}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:22}}>
+        <KpiCard label="Net Profit"      value={fmtFull(netProfit)}     sub={`${netMargin}% net margin`} trend={netProfit>=0?"up":"down"} color={netProfit>=0?C.green:C.red}/>
+        <KpiCard label="Stocks Sold"     value={totalUnits.toLocaleString()} sub={`${fSales.length} transactions`} color={C.blue}/>
+        <KpiCard label="Inventory Value" value={fmtFull(invValue)}      sub="Current at cost" color={C.accent}/>
+      </div>
+
       <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:16}}>
         <ChartCard title="Revenue vs Expenses" height={240}>
           <ResponsiveContainer>
@@ -1065,10 +1119,10 @@ const Overview = ({sales,expenses,inventory,summary}) => {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={C.dim}/>
               <XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
-              <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/>
+              <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/>
               <Tooltip content={<Tip/>}/>
-              <Area type="monotone" dataKey="revenue" stroke={C.green} fill="url(#rg)" strokeWidth={2} name="Revenue"/>
-              <Area type="monotone" dataKey="expenses" stroke={C.red} fill="url(#eg)" strokeWidth={2} name="Expenses"/>
+              <Area type="monotone" dataKey="revenue"  stroke={C.green} fill="url(#rg)" strokeWidth={2} name="Revenue"/>
+              <Area type="monotone" dataKey="expenses" stroke={C.red}   fill="url(#eg)" strokeWidth={2} name="Expenses"/>
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -1123,8 +1177,8 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
       {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Revenue"      value={fmt(totalRevenue)}  sub="Total sales"  trend="up" color={C.green}/>
-        <KpiCard label="COGS"         value={fmt(totalCOGS)}     sub="Cost of goods" color={C.red}/>
+        <KpiCard label="Revenue"      value={fmtFull(totalRevenue)}  sub="Total sales"  trend="up" color={C.green}/>
+        <KpiCard label="COGS"         value={fmtFull(totalCOGS)}     sub="Cost of goods" color={C.red}/>
         <KpiCard label="Gross Profit" value={fmt(grossProfit)}   sub={`${totalRevenue?(grossProfit/totalRevenue*100).toFixed(1):0}% margin`} trend={grossProfit>=0?"up":"down"} color={C.accent}/>
         <KpiCard label="Units Sold"   value={filteredSales.reduce((s,d)=>s+d.units,0).toLocaleString()} sub="Total units" color={C.blue}/>
       </div>
@@ -1137,7 +1191,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-        <ChartCard title="Monthly Revenue" height={230}><ResponsiveContainer><BarChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.green} name="Revenue" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+        <ChartCard title="Monthly Revenue" height={230}><ResponsiveContainer><BarChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.green} name="Revenue" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="Units Sold" height={230}><ResponsiveContainer><LineChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Line type="monotone" dataKey="units" stroke={C.accent} strokeWidth={2} dot={{fill:C.accent,r:3}} name="Units"/></LineChart></ResponsiveContainer></ChartCard>
       </div>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
@@ -1196,10 +1250,15 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete expense: "${confirm.description}" — ${fmtFull(confirm.amount)}? This cannot be undone.`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Expenses"/>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
-        {[["Operations",C.blue],["Marketing",C.purple],["Payroll",C.accent],["Other",C.muted]].map(([cat,color])=><KpiCard key={cat} label={cat} value={fmt(catTotal(cat))} sub="Total" color={color}/>)}
+      {/* Total expenses banner */}
+      <div style={{background:C.card,border:`1px solid ${C.red}33`,borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:13,color:C.muted}}>Total Expenses</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:700,color:C.red}}>{fmtFull(expenses.reduce((s,e)=>s+e.amount,0))}</div>
       </div>
-      <ChartCard title="Monthly Breakdown" height={260}><ResponsiveContainer><BarChart data={ed}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/><Tooltip content={<Tip/>}/><Bar dataKey="Payroll" stackId="a" fill={C.accent} name="Payroll"/><Bar dataKey="Operations" stackId="a" fill={C.blue} name="Operations"/><Bar dataKey="Marketing" stackId="a" fill={C.purple} name="Marketing"/><Bar dataKey="Other" stackId="a" fill={C.dim} name="Other" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
+        {[["Operations",C.blue],["Marketing",C.purple],["Payroll",C.accent],["Other",C.muted]].map(([cat,color])=><KpiCard key={cat} label={cat} value={fmtFull(catTotal(cat))} sub="Total" color={color}/>)}
+      </div>
+      <ChartCard title="Monthly Breakdown" height={260}><ResponsiveContainer><BarChart data={ed}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="Payroll" stackId="a" fill={C.accent} name="Payroll"/><Bar dataKey="Operations" stackId="a" fill={C.blue} name="Operations"/><Bar dataKey="Marketing" stackId="a" fill={C.purple} name="Marketing"/><Bar dataKey="Other" stackId="a" fill={C.dim} name="Other" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
       <div style={{marginTop:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
         {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>Managers and admins can delete entries using the ✕ button</div>}
         <div style={{maxHeight:300,overflowY:"auto"}}>
@@ -1246,7 +1305,10 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
   };
 
   const now = new Date();
-  const filteredMovements = movements.filter(m => {
+
+  // Stock movements: use created_at for time-of-entry but we'll add a date field
+  // For now sort by created_at descending and filter by it
+  const filteredMovements = [...movements].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).filter(m => {
     if (movFilter==="all")   return true;
     const d = new Date(m.created_at);
     if (movFilter==="week")  { const w=new Date(now); w.setDate(w.getDate()-7); return d>=w; }
@@ -1268,7 +1330,7 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
       <SectionHeader title="Inventory & Stock"/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
         <KpiCard label="SKUs"         value={inventory.length} sub="Products" color={C.blue}/>
-        <KpiCard label="Total Value"  value={fmt(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green}/>
+        <KpiCard label="Total Value"  value={fmtFull(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green}/>
         <KpiCard label="Low Stock"    value={inventory.filter(i=>i.status==="low").length} sub="Below reorder" color={C.accent} trend="down"/>
         <KpiCard label="Out of Stock" value={inventory.filter(i=>i.status==="out").length} sub="Action needed" color={C.red} trend="down"/>
       </div>
@@ -1405,10 +1467,10 @@ const PL = ({sales, expenses, summary}) => {
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:22}}>
-        <KpiCard label="Revenue"       value={fmt(ytdRev)}   sub="Total sales"     trend="up" color={C.green}/>
-        <KpiCard label="COGS"          value={fmt(ytdCOGS)}  sub="Cost of goods"              color={C.red}/>
-        <KpiCard label="Gross Profit"  value={fmt(ytdGross)} sub={`${grossMgn}% margin`} trend={ytdGross>=0?"up":"down"} color={ytdGross>=0?C.green:C.red}/>
-        <KpiCard label="Net Profit"    value={fmt(ytdNet)}   sub={`${netMgn}% net margin`} trend={ytdNet>=0?"up":"down"} color={ytdNet>=0?C.green:C.red}/>
+        <KpiCard label="Revenue"       value={fmtFull(ytdRev)}   sub="Total sales"     trend="up" color={C.green}/>
+        <KpiCard label="COGS"          value={fmtFull(ytdCOGS)}  sub="Cost of goods"              color={C.red}/>
+        <KpiCard label="Gross Profit"  value={fmtFull(ytdGross)} sub={`${grossMgn}% margin`} trend={ytdGross>=0?"up":"down"} color={ytdGross>=0?C.green:C.red}/>
+        <KpiCard label="Net Profit"    value={fmtFull(ytdNet)}   sub={`${netMgn}% net margin`} trend={ytdNet>=0?"up":"down"} color={ytdNet>=0?C.green:C.red}/>
       </div>
 
       <ChartCard title="Monthly P&L — Revenue / Gross Profit / Net Profit" height={280}>
@@ -1416,7 +1478,7 @@ const PL = ({sales, expenses, summary}) => {
           <BarChart data={plData}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.dim}/>
             <XAxis dataKey="month" tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false}/>
-            <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v/1000}K`}/>
+            <YAxis tick={{fill:C.muted,fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/>
             <Tooltip content={<Tip/>}/>
             <Bar dataKey="revenue"      fill={C.green}  name="Revenue"      radius={[3,3,0,0]}/>
             <Bar dataKey="gross_profit" fill={C.accent} name="Gross Profit" radius={[3,3,0,0]}/>
