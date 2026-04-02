@@ -222,7 +222,11 @@ const BusinessPicker = ({businesses, onSelect, user}) => (
       </div>
       <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:16,letterSpacing:1.5,textTransform:"uppercase"}}>Select a Business</div>
       {businesses.length===0
-        ? <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:36,textAlign:"center",color:C.muted,fontWeight:600}}>No businesses yet. Ask your admin to create one and add you.</div>
+        ? <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:36,textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>🏢</div>
+            <div style={{fontWeight:700,fontSize:15,color:C.text,marginBottom:8}}>No businesses assigned yet</div>
+            <div style={{fontSize:13,fontWeight:500,color:C.muted,lineHeight:1.6}}>Your account is set up but hasn't been added to a business yet.<br/>Please contact your admin to be assigned to a business.</div>
+          </div>
         : <div style={{display:"grid",gap:12}}>
             {businesses.map(b=>(
               <button key={b.id} onClick={()=>onSelect(b)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"20px 22px",cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",fontFamily:"'IBM Plex Sans',sans-serif",width:"100%"}}>
@@ -1419,6 +1423,7 @@ const CashPage = ({bizId, userRole}) => {
 export default function BizMonitor() {
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
   const [businesses,setBusinesses]=useState([]); const [activeBiz,setActiveBiz]=useState(null);
+  const [businessesLoaded,setBusinessesLoaded]=useState(false);
   const [page,setPage]=useState("overview");
   const [sales,setSales]=useState([]); const [expenses,setExpenses]=useState([]);
   const [inventory,setInventory]=useState([]); const [summary,setSummary]=useState(null);
@@ -1432,7 +1437,16 @@ export default function BizMonitor() {
   },[]);
 
   useEffect(()=>{
-    if(user) apiGet("/businesses").then(b=>{setBusinesses(b);if(b.length===1)setActiveBiz(b[0]);}).catch(()=>{});
+    if(user){
+      setBusinessesLoaded(false);
+      apiGet("/businesses")
+        .then(b=>{
+          setBusinesses(b);
+          if(b.length===1) setActiveBiz(b[0]);
+        })
+        .catch(()=>{})
+        .finally(()=>setBusinessesLoaded(true));
+    }
   },[user]);
 
   const loadBizData=useCallback(async()=>{
@@ -1454,11 +1468,13 @@ export default function BizMonitor() {
     else setApiStatus("ok");
   },[activeBiz,loadBizData]);
 
-  const handleLogout=()=>{clearToken();setUser(null);setActiveBiz(null);setBusinesses([]);setSales([]);setExpenses([]);setInventory([]);setSummary(null);setApiStatus("loading");};
+  const handleLogout=()=>{clearToken();setUser(null);setActiveBiz(null);setBusinesses([]);setSales([]);setExpenses([]);setInventory([]);setSummary(null);setApiStatus("loading");setBusinessesLoaded(false);};
   const switchBusiness=()=>{setActiveBiz(null);setPage("overview");setSidebarOpen(false);};
 
   if(!authChecked) return <LoadingScreen/>;
   if(!user) return <LoginScreen onLogin={setUser}/>;
+  // Wait for businesses to finish loading before showing picker
+  if(!businessesLoaded && !activeBiz) return <LoadingScreen/>;
   if(!activeBiz&&user.role!=="admin") return <BusinessPicker businesses={businesses} onSelect={b=>{setActiveBiz(b);setSidebarOpen(false);}} user={user}/>;
   if(!activeBiz&&user.role==="admin"&&businesses.length>0&&page!=="admin") return <BusinessPicker businesses={[...businesses,{id:"__admin__",name:"⚙ Admin Panel",industry:"System",currency:""}]} onSelect={b=>b.id==="__admin__"?setPage("admin"):setActiveBiz(b)} user={user}/>;
 
