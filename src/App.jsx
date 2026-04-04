@@ -1687,21 +1687,21 @@ export default function BizMonitor() {
   const loadBizData=useCallback(async()=>{
     if(!activeBiz){setApiStatus("ok");return;}
     try{
-      // Core data — must all succeed
-      const [s,e,inv,sum]=await Promise.all([
+      // Core data — sales/expenses/inventory must succeed
+      const [s,e,inv]=await Promise.all([
         apiGet(`/businesses/${activeBiz.id}/sales`),
         apiGet(`/businesses/${activeBiz.id}/expenses`),
         apiGet(`/businesses/${activeBiz.id}/inventory`),
-        apiGet(`/businesses/${activeBiz.id}/summary`),
       ]);
-      setSales(s);setExpenses(e);setInventory(inv);setSummary(sum);
+      setSales(s);setExpenses(e);setInventory(inv);
       setApiStatus("ok");setLastRefresh(new Date());
     }catch{setApiStatus("error");return;}
-    // Cash balances — optional, won't break the app if it fails
-    try{
-      const cash=await apiGet(`/businesses/${activeBiz.id}/cash`);
-      setCashBalances(cash);
-    }catch{setCashBalances([]);}
+    // Summary — optional, some roles may not have access
+    try{setSummary(await apiGet(`/businesses/${activeBiz.id}/summary`));}
+    catch{setSummary(null);}
+    // Cash — optional, won't break the app if it fails
+    try{setCashBalances(await apiGet(`/businesses/${activeBiz.id}/cash`));}
+    catch{setCashBalances([]);}
   },[activeBiz]);
 
   useEffect(()=>{
