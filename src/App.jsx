@@ -133,14 +133,25 @@ const Toast = ({msg,color}) => (
 );
 
 const LoadingScreen = () => (
-  <div style={{position:"fixed",inset:0,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9998,gap:20}}>
-    <div style={{width:48,height:48,border:`3px solid ${C.dim}`,borderTop:`3px solid ${C.accent}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
-    <div style={{fontSize:14,fontWeight:600,color:C.muted,letterSpacing:1}}>Loading…</div>
+  <div style={{position:"fixed",inset:0,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9998,gap:28}}>
+    {/* BizMonitor logo mark */}
+    <div style={{width:56,height:56,background:C.accent,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:"#000",boxShadow:`0 0 32px ${C.accent}44`}}>B</div>
+    {/* Pulsing dots */}
+    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+      {[0,1,2].map(i=>(
+        <div key={i} style={{width:8,height:8,borderRadius:"50%",background:C.accent,animation:"pulse 1.2s ease-in-out infinite",animationDelay:`${i*0.2}s`,opacity:0.3}}/>
+      ))}
+    </div>
+    <div style={{fontSize:13,fontWeight:700,color:C.muted,letterSpacing:2,textTransform:"uppercase"}}>BizMonitor</div>
   </div>
 );
 
-const Spinner = ({size=16}) => (
-  <div style={{width:size,height:size,border:`2px solid ${C.dim}`,borderTop:`2px solid ${C.accent}`,borderRadius:"50%",animation:"spin 0.8s linear infinite",display:"inline-block"}}/>
+const Spinner = ({size=16,color=C.accent}) => (
+  <div style={{display:"inline-flex",gap:3,alignItems:"center"}}>
+    {[0,1,2].map(i=>(
+      <div key={i} style={{width:size/4,height:size/4,borderRadius:"50%",background:color,animation:"pulse 0.8s ease-in-out infinite",animationDelay:`${i*0.15}s`,opacity:0.4}}/>
+    ))}
+  </div>
 );
 
 const DelBtn = ({onClick}) => (
@@ -1024,6 +1035,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const filteredSales=sales.filter(s=>{
     if(filter==="all") return true;
     const d=new Date(s.date);
+    if(filter==="today"){return d.toDateString()===now.toDateString();}
     if(filter==="week"){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
     if(filter==="month"){return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
     return true;
@@ -1033,12 +1045,20 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const totalCOGS=filteredSales.reduce((s,d)=>s+(d.unit_cost||0)*d.units,0);
   const grossProfit=totalRevenue-totalCOGS;
 
+  // Daily chart for this month
+  const dailyData = (() => {
+    const map = {};
+    sales.filter(s=>{const d=new Date(s.date);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();})
+      .forEach(s=>{const day=String(s.date);map[day]=(map[day]||0)+s.amount;});
+    return Object.entries(map).sort(([a],[b])=>a.localeCompare(b)).map(([date,revenue])=>({date:date.slice(5),revenue}));
+  })();
+
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
-      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"]]}/>
+      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:22}}>
         <KpiCard label="Revenue"      value={fmtFull(totalRevenue)}  sub="Total sales" trend="up" color={C.green}/>
         {canSeeCost(userRole)&&<KpiCard label="COGS" value={fmtFull(totalCOGS)} sub="Cost of goods" color={C.red}/>}
@@ -1047,6 +1067,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16,marginBottom:16}}>
         <ChartCard title="Monthly Revenue" height={220}><ResponsiveContainer><BarChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.green} name="Revenue" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+        {dailyData.length>0&&<ChartCard title="Daily Sales — This Month" height={220}><ResponsiveContainer><BarChart data={dailyData}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="date" tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="revenue" fill={C.accent} name="Revenue" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>}
         <ChartCard title="Units Sold" height={220}><ResponsiveContainer><LineChart data={sd}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><Tooltip content={<Tip/>}/><Line type="monotone" dataKey="units" stroke={C.accent} strokeWidth={2} dot={{fill:C.accent,r:3}} name="Units"/></LineChart></ResponsiveContainer></ChartCard>
       </div>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
@@ -1089,8 +1110,27 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
   const ed=aggregateExpensesByMonth(expenses);
   const catTotal=cat=>expenses.filter(e=>(["Operations","Marketing","Payroll"].includes(e.category)?e.category:"Other")===cat).reduce((s,e)=>s+e.amount,0);
   const [confirm,setConfirm]=useState(null); const [toast,setToast]=useState(null);
+  const [filter,setFilter]=useState("all");
   const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete=userRole==="manager"||userRole==="admin";
+  const now=new Date();
+
+  const filteredExpenses=expenses.filter(e=>{
+    if(filter==="all") return true;
+    const d=new Date(e.date);
+    if(filter==="today"){return d.toDateString()===now.toDateString();}
+    if(filter==="week"){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
+    if(filter==="month"){return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
+    return true;
+  });
+
+  // Daily breakdown for this month
+  const dailyExpData = (() => {
+    const map={};
+    expenses.filter(e=>{const d=new Date(e.date);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();})
+      .forEach(e=>{const day=String(e.date);map[day]=(map[day]||0)+e.amount;});
+    return Object.entries(map).sort(([a],[b])=>a.localeCompare(b)).map(([date,amount])=>({date:date.slice(5),amount}));
+  })();
 
   const doDelete=async(id)=>{
     try{await apiDelete(`/businesses/${bizId}/expenses/${id}`);showToast("✓ Expense deleted");onRefresh();}
@@ -1103,14 +1143,18 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete expense: "${confirm.description}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Expenses"/>
+      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]}/>
       <div style={{background:C.card,border:`1px solid ${C.red}33`,borderRadius:10,padding:"16px 20px",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Total Expenses</div>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:24,fontWeight:800,color:C.red}}>{fmtFull(expenses.reduce((s,e)=>s+e.amount,0))}</div>
+        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Total Expenses {filter!=="all"?`(${filter})`:"(all time)"}</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:24,fontWeight:800,color:C.red}}>{fmtFull(filteredExpenses.reduce((s,e)=>s+e.amount,0))}</div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:22}}>
         {[["Operations",C.blue],["Marketing",C.purple],["Payroll",C.accent],["Other",C.muted]].map(([cat,color])=><KpiCard key={cat} label={cat} value={fmtFull(catTotal(cat))} sub="Total" color={color}/>)}
       </div>
-      <ChartCard title="Monthly Breakdown" height={260}><ResponsiveContainer><BarChart data={ed}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="Payroll" stackId="a" fill={C.accent} name="Payroll"/><Bar dataKey="Operations" stackId="a" fill={C.blue} name="Operations"/><Bar dataKey="Marketing" stackId="a" fill={C.purple} name="Marketing"/><Bar dataKey="Other" stackId="a" fill={C.dim} name="Other" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16,marginBottom:16}}>
+        <ChartCard title="Monthly Breakdown" height={240}><ResponsiveContainer><BarChart data={ed}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="month" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="Payroll" stackId="a" fill={C.accent} name="Payroll"/><Bar dataKey="Operations" stackId="a" fill={C.blue} name="Operations"/><Bar dataKey="Marketing" stackId="a" fill={C.purple} name="Marketing"/><Bar dataKey="Other" stackId="a" fill={C.dim} name="Other" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>
+        {dailyExpData.length>0&&<ChartCard title="Daily Expenses — This Month" height={240}><ResponsiveContainer><BarChart data={dailyExpData}><CartesianGrid strokeDasharray="3 3" stroke={C.dim}/><XAxis dataKey="date" tick={{fill:C.muted,fontSize:9}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/><Tooltip content={<Tip/>}/><Bar dataKey="amount" fill={C.red} name="Expenses" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></ChartCard>}
+      </div>
       <div style={{marginTop:16,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
         {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:12,fontWeight:600,color:C.muted}}>Managers and admins can delete using ✕</div>}
         <div style={{overflowX:"auto"}}>
@@ -1119,7 +1163,7 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
               <tr>{["Date","Category","Amount","Vendor","Description","By",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"11px 16px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:11,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {expenses.map(e=>(
+              {filteredExpenses.map(e=>(
                 <tr key={e.id} style={{borderTop:`1px solid ${C.border}`}}>
                   <td style={{padding:"11px 16px",color:C.muted,fontFamily:"'DM Mono',monospace",fontSize:12,whiteSpace:"nowrap"}}>{String(e.date)}</td>
                   <td style={{padding:"11px 16px"}}><span style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:5,background:C.blue+"22",color:C.blue}}>{e.category}</span></td>
@@ -1419,6 +1463,295 @@ const CashPage = ({bizId, userRole}) => {
   );
 };
 
+const CashPage = ({bizId, userRole}) => {
+  const canDelete=userRole==="manager"||userRole==="admin";
+  const [confirmCash,setConfirmCash]=useState(null);
+  const [balances,setBalances]=useState([]); const [loading,setLoading]=useState(true);
+  const [toast,setToast]=useState(null); const [submitting,setSubmitting]=useState(false);
+  const [form,setForm]=useState({date:todayStr(),opening_balance:"",closing_balance:"",bank_balance:"",notes:""});
+
+  const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
+  const load=async()=>{try{setBalances(await apiGet(`/businesses/${bizId}/cash`));}catch(e){showToast(e.message,C.red);}setLoading(false);};
+  useEffect(()=>{load();},[bizId]);
+
+  const submit=async()=>{
+    if(!form.opening_balance||!form.closing_balance) return showToast("Enter opening and closing balance",C.red);
+    setSubmitting(true);
+    try{
+      await apiPost(`/businesses/${bizId}/cash`,{
+        ...form,
+        opening_balance:Number(form.opening_balance),
+        closing_balance:Number(form.closing_balance),
+        bank_balance:form.bank_balance?Number(form.bank_balance):0,
+      });
+      setForm({date:todayStr(),opening_balance:"",closing_balance:"",bank_balance:"",notes:""});
+      showToast("✓ Balance recorded"); load();
+    }catch(e){showToast(`✕ ${e.message}`,C.red);}
+    setSubmitting(false);
+  };
+
+  const deleteCash=async(id)=>{
+    try{await apiDelete(`/businesses/${bizId}/cash/${id}`);showToast("✓ Record deleted");load();}
+    catch(e){showToast(`✕ ${e.message}`,C.red);}
+    setConfirmCash(null);
+  };
+
+  const latest=balances[0]||null;
+  const movement=latest?latest.closing_balance-latest.opening_balance:0;
+  const avgClosing=balances.length?balances.reduce((s,b)=>s+b.closing_balance,0)/balances.length:0;
+  const latestCash=latest?.closing_balance||0;
+  const latestBank=latest?.bank_balance||0;
+  const totalBalance=latestCash+latestBank;
+  const chartData=balances.slice(0,30).reverse().map(b=>({
+    date:String(b.date).slice(5),
+    cash:b.closing_balance,
+    bank:b.bank_balance||0,
+    total:(b.closing_balance||0)+(b.bank_balance||0),
+  }));
+
+  return (
+    <div>
+      {toast&&<Toast msg={toast.msg} color={toast.color}/>}
+      {confirmCash&&<ConfirmDelete message={`Delete balance record for ${confirmCash.date}?`} onConfirm={()=>deleteCash(confirmCash.id)} onCancel={()=>setConfirmCash(null)}/>}
+      <SectionHeader title="Cash & Bank Balance" subtitle="Daily cash position, bank balance and totals"/>
+
+      {/* Total balance banner */}
+      <div style={{background:`linear-gradient(135deg,${C.accent}22,${C.green}11)`,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"18px 24px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>Total Balance (Cash + Bank)</div>
+          <div style={{fontSize:32,fontWeight:800,color:C.text,fontFamily:"'DM Mono',monospace"}}>{fmtFull(totalBalance)}</div>
+        </div>
+        <div style={{display:"flex",gap:24}}>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted}}>Cash in Hand</div>
+            <div style={{fontSize:18,fontWeight:800,color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(latestCash)}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted}}>Bank Balance</div>
+            <div style={{fontSize:18,fontWeight:800,color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(latestBank)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:22}}>
+        <KpiCard label="Closing Cash"  value={fmtFull(latestCash)}  sub={latest?String(latest.date):"No records"} color={C.green} trend={movement>=0?"up":"down"}/>
+        <KpiCard label="Bank Balance"  value={fmtFull(latestBank)}  sub="Latest recorded" color={C.blue}/>
+        <KpiCard label="Total Balance" value={fmtFull(totalBalance)} sub="Cash + Bank" color={C.accent}/>
+        <KpiCard label="Avg Closing"   value={fmtFull(Math.round(avgClosing))} sub={`${balances.length} days`} color={C.muted}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:20,marginBottom:20}}>
+        {/* Entry form */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24}}>
+          <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:20}}><span style={{background:C.accentDim,padding:"5px 14px",borderRadius:7}}>💵 Record Daily Balance</span></div>
+          <Field label="Date" required><input type="date" style={iStyle} value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></Field>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Opening Cash" required><input type="number" style={iStyle} placeholder="0.00" value={form.opening_balance} onChange={e=>setForm({...form,opening_balance:e.target.value})}/></Field>
+            <Field label="Closing Cash" required><input type="number" style={iStyle} placeholder="0.00" value={form.closing_balance} onChange={e=>setForm({...form,closing_balance:e.target.value})}/></Field>
+          </div>
+          <Field label="Bank Balance">
+            <input type="number" style={iStyle} placeholder="0.00 (optional)" value={form.bank_balance} onChange={e=>setForm({...form,bank_balance:e.target.value})}/>
+          </Field>
+          {form.opening_balance&&form.closing_balance&&(()=>{
+            const cashDiff=Number(form.closing_balance)-Number(form.opening_balance);
+            const total=(Number(form.closing_balance)||0)+(Number(form.bank_balance)||0);
+            return(
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                  <span style={{fontSize:13,fontWeight:600,color:C.muted}}>Cash movement</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontWeight:800,color:cashDiff>=0?C.green:C.red}}>{cashDiff>=0?"+":""}{fmtFull(cashDiff)}</span>
+                </div>
+                {form.bank_balance&&<div style={{display:"flex",justifyContent:"space-between",paddingTop:6,borderTop:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:13,fontWeight:700,color:C.muted}}>Total (cash + bank)</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontWeight:800,color:C.accent}}>{fmtFull(total)}</span>
+                </div>}
+              </div>
+            );
+          })()}
+          <Field label="Notes"><textarea style={{...iStyle,resize:"vertical",minHeight:56}} placeholder="e.g. Market day, payday" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          <button onClick={submit} disabled={submitting} style={{width:"100%",padding:"13px",borderRadius:9,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:15,cursor:submitting?"not-allowed":"pointer",opacity:submitting?0.7:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"'IBM Plex Sans',sans-serif"}}>
+            {submitting?<><Spinner size={16}/> Saving…</>:"💾 Save Balance"}
+          </button>
+        </div>
+
+        {/* Recent records */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24}}>
+          <div style={{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Recent Records</div>
+          {loading?<div style={{display:"flex",justifyContent:"center",padding:24}}><Spinner size={24}/></div>
+          :balances.length===0?<div style={{color:C.muted,fontSize:13,fontWeight:600,textAlign:"center",padding:24}}>No records yet.</div>
+          :<div style={{display:"grid",gap:8,maxHeight:440,overflowY:"auto"}}>
+            {balances.slice(0,15).map(b=>{
+              const cashDiff=b.closing_balance-b.opening_balance;
+              const bankBal=b.bank_balance||0;
+              const total=b.closing_balance+bankBal;
+              return(
+                <div key={b.id} style={{background:C.surface,borderRadius:9,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:700,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{String(b.date)}</div>
+                      {b.notes&&<div style={{fontSize:11,fontWeight:500,color:C.dim,marginTop:2}}>{b.notes}</div>}
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:14,fontWeight:800,color:cashDiff>=0?C.green:C.red}}>{cashDiff>=0?"+":""}{fmtFull(cashDiff)}</div>
+                      {canDelete&&<button onClick={()=>setConfirmCash(b)} style={{fontSize:10,fontWeight:700,color:C.red,background:"transparent",border:`1px solid ${C.red}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",marginTop:4,fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>}
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,fontSize:11,fontWeight:600}}>
+                    <div style={{background:C.green+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
+                      <div style={{color:C.muted,fontSize:10}}>Cash</div>
+                      <div style={{color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.closing_balance)}</div>
+                    </div>
+                    <div style={{background:C.blue+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
+                      <div style={{color:C.muted,fontSize:10}}>Bank</div>
+                      <div style={{color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(bankBal)}</div>
+                    </div>
+                    <div style={{background:C.accent+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
+                      <div style={{color:C.muted,fontSize:10}}>Total</div>
+                      <div style={{color:C.accent,fontFamily:"'DM Mono',monospace"}}>{fmtFull(total)}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>}
+        </div>
+      </div>
+
+      {chartData.length>1&&<ChartCard title="Cash vs Bank vs Total — Last 30 Days" height={260}>
+        <ResponsiveContainer><AreaChart data={chartData}>
+          <defs>
+            <linearGradient id="cg2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.green} stopOpacity={0.3}/><stop offset="95%" stopColor={C.green} stopOpacity={0}/></linearGradient>
+            <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.blue} stopOpacity={0.25}/><stop offset="95%" stopColor={C.blue} stopOpacity={0}/></linearGradient>
+            <linearGradient id="tg2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.accent} stopOpacity={0.2}/><stop offset="95%" stopColor={C.accent} stopOpacity={0}/></linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke={C.dim}/>
+          <XAxis dataKey="date" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/>
+          <YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/>
+          <Tooltip content={<Tip/>}/>
+          <Area type="monotone" dataKey="cash"  stroke={C.green}  fill="url(#cg2)" strokeWidth={2} name="Cash"/>
+          <Area type="monotone" dataKey="bank"  stroke={C.blue}   fill="url(#bg2)" strokeWidth={2} name="Bank"/>
+          <Area type="monotone" dataKey="total" stroke={C.accent} fill="url(#tg2)" strokeWidth={2} name="Total"/>
+        </AreaChart></ResponsiveContainer>
+      </ChartCard>}
+    </div>
+  );
+};
+
+// ── Reports Page ──────────────────────────────────────────────────────────────
+const Reports = ({sales, expenses, balances, userRole}) => {
+  const [period,setPeriod]=useState("month");
+  const now=new Date();
+
+  const filterByDate=items=>{
+    return items.filter(item=>{
+      const d=new Date(item.date);
+      if(period==="today") return d.toDateString()===now.toDateString();
+      if(period==="week"){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
+      if(period==="month") return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+      if(period==="year") return d.getFullYear()===now.getFullYear();
+      return true;
+    });
+  };
+
+  const fSales=filterByDate(sales);
+  const fExp=filterByDate(expenses);
+  const totalIncome=fSales.reduce((s,d)=>s+d.amount,0);
+  const totalCOGS=fSales.reduce((s,d)=>s+(d.unit_cost||0)*d.units,0);
+  const grossProfit=totalIncome-totalCOGS;
+  const totalExpenses=fExp.reduce((s,d)=>s+d.amount,0);
+  const netProfit=grossProfit-totalExpenses;
+  const latestBalance=balances?.[0];
+  const cashBalance=latestBalance?.closing_balance||0;
+  const bankBalance=latestBalance?.bank_balance||0;
+  const totalBalance=cashBalance+bankBalance;
+  const grossMargin=totalIncome?(grossProfit/totalIncome*100).toFixed(1):0;
+  const netMargin=totalIncome?(netProfit/totalIncome*100).toFixed(1):0;
+
+  const PERIODS=[["today","Today"],["week","This Week"],["month","This Month"],["year","This Year"]];
+
+  return (
+    <div>
+      <SectionHeader title="Reports" subtitle="Income, expenses and balance summary"/>
+      <PeriodFilter value={period} onChange={setPeriod} options={PERIODS}/>
+
+      {/* Summary cards */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:24}}>
+        <KpiCard label="Total Income"   value={fmtFull(totalIncome)}   sub={`${fSales.length} sales`}    trend="up" color={C.green}/>
+        <KpiCard label="Total Expenses" value={fmtFull(totalExpenses)} sub={`${fExp.length} entries`}   color={C.red}/>
+        <KpiCard label="Net Profit"     value={fmtFull(netProfit)}     sub={`${netMargin}% margin`} trend={netProfit>=0?"up":"down"} color={netProfit>=0?C.green:C.red}/>
+        <KpiCard label="Cash Balance"   value={fmtFull(cashBalance)}   sub="Latest closing" color={C.blue}/>
+        <KpiCard label="Bank Balance"   value={fmtFull(bankBalance)}   sub="Latest recorded" color={C.purple}/>
+        <KpiCard label="Total Balance"  value={fmtFull(totalBalance)}  sub="Cash + Bank" color={C.accent}/>
+      </div>
+
+      {/* Income vs Expenses summary */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16,marginBottom:20}}>
+        {/* Income breakdown */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24}}>
+          <div style={{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Income Summary</div>
+          {[
+            ["Total Sales Revenue", fmtFull(totalIncome), C.green],
+            ...(canSeeCost(userRole)?[["Cost of Goods Sold", `− ${fmtFull(totalCOGS)}`, C.red]]:[] ),
+            ...(canSeeCost(userRole)?[["Gross Profit", fmtFull(grossProfit), grossProfit>=0?C.accent:C.red]]:[] ),
+          ].map(([label,value,color])=>(
+            <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+              <span style={{fontSize:13,fontWeight:600,color:C.muted}}>{label}</span>
+              <span style={{fontSize:14,fontWeight:800,color,fontFamily:"'DM Mono',monospace"}}>{value}</span>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0 0"}}>
+            <span style={{fontSize:14,fontWeight:800,color:C.text}}>Net Profit</span>
+            <span style={{fontSize:16,fontWeight:800,color:netProfit>=0?C.green:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(netProfit)}</span>
+          </div>
+        </div>
+
+        {/* Expense breakdown */}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:24}}>
+          <div style={{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Expense Breakdown</div>
+          {["Operations","Marketing","Payroll","Travel","Utilities","Office Supplies","Software","Other"].map(cat=>{
+            const total=fExp.filter(e=>e.category===cat).reduce((s,e)=>s+e.amount,0);
+            if(!total) return null;
+            const pct=totalExpenses?(total/totalExpenses*100).toFixed(0):0;
+            return(
+              <div key={cat} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <span style={{fontSize:13,fontWeight:600,color:C.muted}}>{cat}</span>
+                  <span style={{fontSize:13,fontWeight:700,color:C.text,fontFamily:"'DM Mono',monospace"}}>{fmtFull(total)}</span>
+                </div>
+                <div style={{background:C.surface,borderRadius:4,height:6,overflow:"hidden"}}>
+                  <div style={{width:`${pct}%`,height:"100%",background:C.red,borderRadius:4,transition:"width 0.3s"}}/>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0 0",borderTop:`1px solid ${C.border}`,marginTop:8}}>
+            <span style={{fontSize:14,fontWeight:800,color:C.text}}>Total</span>
+            <span style={{fontSize:16,fontWeight:800,color:C.red,fontFamily:"'DM Mono',monospace"}}>{fmtFull(totalExpenses)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Balance section */}
+      <div style={{background:C.card,border:`1px solid ${C.accent}33`,borderRadius:12,padding:24}}>
+        <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:1.5,textTransform:"uppercase",marginBottom:16}}>Balance Position (Latest Record — {latestBalance?String(latestBalance.date):"No data"})</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12}}>
+          {[
+            ["Cash in Hand",  fmtFull(cashBalance),  C.green,  "Closing cash balance"],
+            ["Bank Balance",  fmtFull(bankBalance),  C.blue,   "As recorded"],
+            ["Total Balance", fmtFull(totalBalance), C.accent, "Cash + Bank combined"],
+          ].map(([label,value,color,sub])=>(
+            <div key={label} style={{background:C.surface,borderRadius:10,padding:"16px 18px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>{label}</div>
+              <div style={{fontSize:20,fontWeight:800,color,fontFamily:"'DM Mono',monospace",wordBreak:"break-all"}}>{value}</div>
+              <div style={{fontSize:11,fontWeight:600,color:C.dim,marginTop:4}}>{sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function BizMonitor() {
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
@@ -1427,6 +1760,7 @@ export default function BizMonitor() {
   const [page,setPage]=useState("overview");
   const [sales,setSales]=useState([]); const [expenses,setExpenses]=useState([]);
   const [inventory,setInventory]=useState([]); const [summary,setSummary]=useState(null);
+  const [cashBalances,setCashBalances]=useState([]);
   const [apiStatus,setApiStatus]=useState("loading"); const [lastRefresh,setLastRefresh]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
 
@@ -1452,13 +1786,14 @@ export default function BizMonitor() {
   const loadBizData=useCallback(async()=>{
     if(!activeBiz){setApiStatus("ok");return;}
     try{
-      const [s,e,inv,sum]=await Promise.all([
+      const [s,e,inv,sum,cash]=await Promise.all([
         apiGet(`/businesses/${activeBiz.id}/sales`),
         apiGet(`/businesses/${activeBiz.id}/expenses`),
         apiGet(`/businesses/${activeBiz.id}/inventory`),
         apiGet(`/businesses/${activeBiz.id}/summary`),
+        apiGet(`/businesses/${activeBiz.id}/cash`),
       ]);
-      setSales(s);setExpenses(e);setInventory(inv);setSummary(sum);
+      setSales(s);setExpenses(e);setInventory(inv);setSummary(sum);setCashBalances(cash);
       setApiStatus("ok");setLastRefresh(new Date());
     }catch{setApiStatus("error");}
   },[activeBiz]);
@@ -1468,7 +1803,7 @@ export default function BizMonitor() {
     else setApiStatus("ok");
   },[activeBiz,loadBizData]);
 
-  const handleLogout=()=>{clearToken();setUser(null);setActiveBiz(null);setBusinesses([]);setSales([]);setExpenses([]);setInventory([]);setSummary(null);setApiStatus("loading");setBusinessesLoaded(false);};
+  const handleLogout=()=>{clearToken();setUser(null);setActiveBiz(null);setBusinesses([]);setSales([]);setExpenses([]);setInventory([]);setSummary(null);setCashBalances([]);setApiStatus("loading");setBusinessesLoaded(false);};
   const switchBusiness=()=>{setActiveBiz(null);setPage("overview");setSidebarOpen(false);};
 
   if(!authChecked) return <LoadingScreen/>;
@@ -1497,17 +1832,19 @@ export default function BizMonitor() {
     inventory:<Inventory inventory={inventory} bizId={activeBiz?.id} userRole={role} onRefresh={loadBizData}/>,
     pl:       <PL        sales={sales} expenses={expenses} summary={summary} userRole={role}/>,
     cash:     <CashPage  bizId={activeBiz?.id} userRole={role}/>,
+    reports:  <Reports   sales={sales} expenses={expenses} balances={cashBalances} userRole={role}/>,
   };
 
   const NAV_ITEMS=[
     ...(isAdmin?[{id:"admin",label:"Admin Panel",icon:"⚙",color:C.accent}]:[]),
-    {id:"entry",    label:"Data Entry", icon:"✎", color:C.accent, highlight:true},
-    {id:"overview", label:"Overview",   icon:"⬡"},
-    {id:"sales",    label:"Sales",      icon:"↑"},
-    {id:"expenses", label:"Expenses",   icon:"↓"},
-    {id:"inventory",label:"Inventory",  icon:"▣"},
-    {id:"pl",       label:"P&L",        icon:"≋"},
-    {id:"cash",     label:"Cash Balance",icon:"💵"},
+    {id:"entry",    label:"Data Entry",  icon:"✎", color:C.accent, highlight:true},
+    {id:"overview", label:"Overview",    icon:"⬡"},
+    {id:"sales",    label:"Sales",       icon:"↑"},
+    {id:"expenses", label:"Expenses",    icon:"↓"},
+    {id:"inventory",label:"Inventory",   icon:"▣"},
+    ...(role!=="employee"?[{id:"pl",label:"P&L",icon:"≋"}]:[]),
+    {id:"cash",     label:"Cash & Bank", icon:"💵"},
+    {id:"reports",  label:"Reports",     icon:"📊", color:C.blue},
   ];
 
   const NavBtn=({item})=>(
@@ -1546,7 +1883,10 @@ export default function BizMonitor() {
           <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"0 14px 8px"}}>Data</div>
           <NavBtn item={{id:"entry",label:"Data Entry",icon:"✎",color:C.accent}}/>
           <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px"}}>Dashboards</div>
-          {["overview","sales","expenses","inventory","pl","cash"].map(id=><NavBtn key={id} item={NAV_ITEMS.find(n=>n.id===id)||{id,label:id,icon:"·"}}/>)}
+          {["overview","sales","expenses","inventory"].map(id=><NavBtn key={id} item={NAV_ITEMS.find(n=>n.id===id)||{id,label:id,icon:"·"}}/>)}
+          {role!=="employee"&&<NavBtn item={NAV_ITEMS.find(n=>n.id==="pl")||{id:"pl",label:"P&L",icon:"≋"}}/>}
+          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px"}}>Finance</div>
+          {["cash","reports"].map(id=><NavBtn key={id} item={NAV_ITEMS.find(n=>n.id===id)||{id,label:id,icon:"·"}}/>)}
         </>}
       </nav>
       {/* Footer */}
