@@ -1414,13 +1414,15 @@ const CashPage = ({bizId, userRole}) => {
       {confirmCash&&<ConfirmDelete message={`Delete balance record for ${confirmCash.date}?`} onConfirm={()=>deleteCash(confirmCash.id)} onCancel={()=>setConfirmCash(null)}/>}
       <SectionHeader title="Cash & Bank Balance" subtitle="Daily cash position, bank balance and totals"/>
 
-      {/* Total balance banner */}
+      {/* Total balance banner — managers/admins see full, employees see cash only */}
       <div style={{background:`linear-gradient(135deg,${C.accent}22,${C.green}11)`,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"18px 24px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
         <div>
-          <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>Total Balance (Cash + Bank)</div>
-          <div style={{fontSize:32,fontWeight:800,color:C.text,fontFamily:"'DM Mono',monospace"}}>{fmtFull(totalBalance)}</div>
+          <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>
+            {canSeeCost(userRole)?"Total Balance (Cash + Bank)":"Cash Balance"}
+          </div>
+          <div style={{fontSize:32,fontWeight:800,color:C.text,fontFamily:"'DM Mono',monospace"}}>{fmtFull(canSeeCost(userRole)?totalBalance:latestCash)}</div>
         </div>
-        <div style={{display:"flex",gap:24}}>
+        {canSeeCost(userRole)&&<div style={{display:"flex",gap:24}}>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:11,fontWeight:700,color:C.muted}}>Cash in Hand</div>
             <div style={{fontSize:18,fontWeight:800,color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(latestCash)}</div>
@@ -1429,13 +1431,13 @@ const CashPage = ({bizId, userRole}) => {
             <div style={{fontSize:11,fontWeight:700,color:C.muted}}>Bank Balance</div>
             <div style={{fontSize:18,fontWeight:800,color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(latestBank)}</div>
           </div>
-        </div>
+        </div>}
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:22}}>
         <KpiCard label="Closing Cash"  value={fmtFull(latestCash)}  sub={latest?String(latest.date):"No records"} color={C.green} trend={movement>=0?"up":"down"}/>
-        <KpiCard label="Bank Balance"  value={fmtFull(latestBank)}  sub="Latest recorded" color={C.blue}/>
-        <KpiCard label="Total Balance" value={fmtFull(totalBalance)} sub="Cash + Bank" color={C.accent}/>
+        {canSeeCost(userRole)&&<KpiCard label="Bank Balance"  value={fmtFull(latestBank)}  sub="Latest recorded" color={C.blue}/>}
+        {canSeeCost(userRole)&&<KpiCard label="Total Balance" value={fmtFull(totalBalance)} sub="Cash + Bank" color={C.accent}/>}
         <KpiCard label="Avg Closing"   value={fmtFull(Math.round(avgClosing))} sub={`${balances.length} days`} color={C.muted}/>
       </div>
 
@@ -1448,9 +1450,9 @@ const CashPage = ({bizId, userRole}) => {
             <Field label="Opening Cash" required><input type="number" style={iStyle} placeholder="0.00" value={form.opening_balance} onChange={e=>setForm({...form,opening_balance:e.target.value})}/></Field>
             <Field label="Closing Cash" required><input type="number" style={iStyle} placeholder="0.00" value={form.closing_balance} onChange={e=>setForm({...form,closing_balance:e.target.value})}/></Field>
           </div>
-          <Field label="Bank Balance">
+          {canSeeCost(userRole)&&<Field label="Bank Balance">
             <input type="number" style={iStyle} placeholder="0.00 (optional)" value={form.bank_balance} onChange={e=>setForm({...form,bank_balance:e.target.value})}/>
-          </Field>
+          </Field>}
           {form.opening_balance&&form.closing_balance&&(()=>{
             const cashDiff=Number(form.closing_balance)-Number(form.opening_balance);
             const total=(Number(form.closing_balance)||0)+(Number(form.bank_balance)||0);
@@ -1495,19 +1497,19 @@ const CashPage = ({bizId, userRole}) => {
                       {canDelete&&<button onClick={()=>setConfirmCash(b)} style={{fontSize:10,fontWeight:700,color:C.red,background:"transparent",border:`1px solid ${C.red}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",marginTop:4,fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>}
                     </div>
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,fontSize:11,fontWeight:600}}>
+                  <div style={{display:"grid",gridTemplateColumns:canSeeCost(userRole)?"1fr 1fr 1fr":"1fr",gap:6,fontSize:11,fontWeight:600}}>
                     <div style={{background:C.green+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
                       <div style={{color:C.muted,fontSize:10}}>Cash</div>
                       <div style={{color:C.green,fontFamily:"'DM Mono',monospace"}}>{fmtFull(b.closing_balance)}</div>
                     </div>
-                    <div style={{background:C.blue+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
+                    {canSeeCost(userRole)&&<div style={{background:C.blue+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
                       <div style={{color:C.muted,fontSize:10}}>Bank</div>
                       <div style={{color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(bankBal)}</div>
-                    </div>
-                    <div style={{background:C.accent+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
+                    </div>}
+                    {canSeeCost(userRole)&&<div style={{background:C.accent+"11",borderRadius:5,padding:"4px 8px",textAlign:"center"}}>
                       <div style={{color:C.muted,fontSize:10}}>Total</div>
                       <div style={{color:C.accent,fontFamily:"'DM Mono',monospace"}}>{fmtFull(total)}</div>
-                    </div>
+                    </div>}
                   </div>
                 </div>
               );
@@ -1528,8 +1530,8 @@ const CashPage = ({bizId, userRole}) => {
           <YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false} tickFormatter={v=>fmtFull(v)}/>
           <Tooltip content={<Tip/>}/>
           <Area type="monotone" dataKey="cash"  stroke={C.green}  fill="url(#cg2)" strokeWidth={2} name="Cash"/>
-          <Area type="monotone" dataKey="bank"  stroke={C.blue}   fill="url(#bg2)" strokeWidth={2} name="Bank"/>
-          <Area type="monotone" dataKey="total" stroke={C.accent} fill="url(#tg2)" strokeWidth={2} name="Total"/>
+          {canSeeCost(userRole)&&<Area type="monotone" dataKey="bank"  stroke={C.blue}   fill="url(#bg2)" strokeWidth={2} name="Bank"/>}
+          {canSeeCost(userRole)&&<Area type="monotone" dataKey="total" stroke={C.accent} fill="url(#tg2)" strokeWidth={2} name="Total"/>}
         </AreaChart></ResponsiveContainer>
       </ChartCard>}
     </div>
@@ -1685,16 +1687,21 @@ export default function BizMonitor() {
   const loadBizData=useCallback(async()=>{
     if(!activeBiz){setApiStatus("ok");return;}
     try{
-      const [s,e,inv,sum,cash]=await Promise.all([
+      // Core data — must all succeed
+      const [s,e,inv,sum]=await Promise.all([
         apiGet(`/businesses/${activeBiz.id}/sales`),
         apiGet(`/businesses/${activeBiz.id}/expenses`),
         apiGet(`/businesses/${activeBiz.id}/inventory`),
         apiGet(`/businesses/${activeBiz.id}/summary`),
-        apiGet(`/businesses/${activeBiz.id}/cash`),
       ]);
-      setSales(s);setExpenses(e);setInventory(inv);setSummary(sum);setCashBalances(cash);
+      setSales(s);setExpenses(e);setInventory(inv);setSummary(sum);
       setApiStatus("ok");setLastRefresh(new Date());
-    }catch{setApiStatus("error");}
+    }catch{setApiStatus("error");return;}
+    // Cash balances — optional, won't break the app if it fails
+    try{
+      const cash=await apiGet(`/businesses/${activeBiz.id}/cash`);
+      setCashBalances(cash);
+    }catch{setCashBalances([]);}
   },[activeBiz]);
 
   useEffect(()=>{
