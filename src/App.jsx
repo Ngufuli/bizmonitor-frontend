@@ -158,8 +158,8 @@ const DelBtn = ({onClick}) => (
   <button onClick={onClick} style={{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.red}33`,background:C.red+"11",color:C.red,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>
 );
 
-const PeriodFilter = ({value, onChange, options=[["all","All Time"],["year","This Year"],["month","This Month"],["week","This Week"]]}) => (
-  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18}}>
+const PeriodFilter = ({value, onChange, options=[["all","All Time"],["year","This Year"],["month","This Month"],["week","This Week"]], customDate, onCustomDate}) => (
+  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18,alignItems:"center"}}>
     {options.map(([val,label])=>(
       <button key={val} onClick={()=>onChange(val)} style={{
         padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",
@@ -167,6 +167,22 @@ const PeriodFilter = ({value, onChange, options=[["all","All Time"],["year","Thi
         background:value===val?C.accentDim:"transparent",color:value===val?C.accent:C.muted,
       }}>{label}</button>
     ))}
+    {/* Calendar picker button — always visible */}
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <button onClick={()=>onChange("custom")} style={{
+        padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer",
+        fontFamily:"'IBM Plex Sans',sans-serif",border:`1px solid ${value==="custom"?C.blue:C.border}`,
+        background:value==="custom"?C.blue+"22":"transparent",color:value==="custom"?C.blue:C.muted,
+      }}>📅 Pick Date</button>
+      {value==="custom"&&(
+        <input
+          type="date"
+          value={customDate||todayStr()}
+          onChange={e=>{onCustomDate&&onCustomDate(e.target.value);}}
+          style={{...iStyle,width:"auto",padding:"6px 10px",fontSize:12,color:C.accent,border:`1px solid ${C.blue}`,borderRadius:7,height:34}}
+        />
+      )}
+    </div>
   </div>
 );
 
@@ -716,7 +732,12 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
             </>}
 
             <div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:16,padding:"8px 12px",background:C.surface,borderRadius:7}}>
-              ⚠ Editing recreates this entry. {editEntry.type==="sale"?"Inventory stock will NOT change.":""}
+              {editEntry.type==="sale"
+                ? editEntry.original?.sku
+                  ? <>⚠ Editing quantity: old quantity ({editEntry.original?.units}) will be <strong style={{color:C.green}}>added back</strong> to inventory, new quantity ({editEntry.units}) will be <strong style={{color:C.red}}>deducted</strong>.</>
+                  : <>⚠ This sale has no linked inventory SKU — stock levels will not change.</>
+                : <>⚠ Editing recreates this expense entry.</>
+              }
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={async()=>{
@@ -724,9 +745,35 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
                 try{
                   const e=editEntry;
                   if(e.type==="sale"){
+                    const origUnits=e.original?.units||0;
+                    const newUnits=Number(e.units)||0;
+                    const newAmt=e.unit_price&&e.units?Number(e.unit_price)*newUnits:Number(e.amount);
+
+                    // Delete old sale
                     await apiDelete(`/businesses/${bizId}/sales/${e.id}`);
-                    const newAmt = e.unit_price && e.units ? Number(e.unit_price)*Number(e.units) : e.amount;
-                    await apiPost(`/businesses/${bizId}/sales`,{date:e.date,sku:null,product:e.product,unit_price:Number(e.unit_price)||null,amount:Number(newAmt),units:Number(e.units),rep:e.rep||null,notes:e.notes||null});
+
+                    // If linked to inventory SKU and quantity changed: undo old, apply new
+                    if(e.original?.sku && origUnits!==newUnits){
+                      // Restore old units back to inventory
+                      if(origUnits>0){
+                        await apiPatch(`/businesses/${bizId}/inventory/${e.original.sku}/stock`,{
+                          movement_type:"add",qty:origUnits,reason:`Undo sale edit (was ${origUnits} units)`
+                        });
+                      }
+                      // Create new sale WITH sku so new quantity gets deducted
+                      await apiPost(`/businesses/${bizId}/sales`,{
+                        date:e.date,sku:e.original.sku,product:e.product,
+                        unit_price:Number(e.unit_price)||null,amount:newAmt,
+                        units:newUnits,rep:e.rep||null,notes:e.notes||null
+                      });
+                    } else {
+                      // No quantity change or no SKU — recreate without deducting
+                      await apiPost(`/businesses/${bizId}/sales`,{
+                        date:e.date,sku:null,product:e.product,
+                        unit_price:Number(e.unit_price)||null,amount:newAmt,
+                        units:newUnits,rep:e.rep||null,notes:e.notes||null
+                      });
+                    }
                   } else {
                     await apiDelete(`/businesses/${bizId}/expenses/${e.id}`);
                     await apiPost(`/businesses/${bizId}/expenses`,{date:e.date,category:e.category,amount:Number(e.amount),vendor:e.vendor,description:e.description,submitted_by:e.submitted_by||null});
@@ -845,10 +892,29 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
             </Field>
             <Field label="Quantity" required><input type="number" style={iStyle} placeholder="How many?" value={stock.qty} onChange={e=>setStock({...stock,qty:e.target.value})}/></Field>
             {stock.movement_type==="add"&&(
-              <Field label="Update Unit Cost (optional)">
-                <input type="number" style={iStyle} placeholder={sel?`Current: ${fmtFull(sel.unit_cost)}`:"Leave blank to keep current"} value={stock.new_unit_cost} onChange={e=>setStock({...stock,new_unit_cost:e.target.value})}/>
+              <Field label="New Unit Cost (buying price — optional)">
+                <input type="number" style={iStyle} placeholder={sel?`Current WAC: ${fmtFull(sel.unit_cost)}`:"Leave blank to keep current cost"} value={stock.new_unit_cost} onChange={e=>setStock({...stock,new_unit_cost:e.target.value})}/>
               </Field>
             )}
+            {/* Weighted Average Cost preview */}
+            {sel&&stock.qty&&stock.new_unit_cost&&stock.movement_type==="add"&&(()=>{
+              const existingVal = sel.stock * sel.unit_cost;
+              const newVal      = Number(stock.qty) * Number(stock.new_unit_cost);
+              const totalUnits  = sel.stock + Number(stock.qty);
+              const wac         = totalUnits > 0 ? (existingVal + newVal) / totalUnits : Number(stock.new_unit_cost);
+              return(
+                <div style={{background:C.blue+"11",border:`1px solid ${C.blue}33`,borderRadius:9,padding:"12px 14px",marginBottom:14}}>
+                  <div style={{fontSize:11,fontWeight:800,color:C.blue,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Weighted Average Cost Preview</div>
+                  <div style={{fontSize:12,fontWeight:500,color:C.muted,marginBottom:6,fontFamily:"'DM Mono',monospace"}}>
+                    ({sel.stock} × {fmtFull(sel.unit_cost)} + {stock.qty} × {fmtFull(Number(stock.new_unit_cost))}) ÷ {totalUnits}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:12,fontWeight:600,color:C.muted}}>New unit cost will be</span>
+                    <span style={{fontSize:16,fontWeight:800,color:C.blue,fontFamily:"'DM Mono',monospace"}}>{fmtFull(Math.round(wac * 100) / 100)}</span>
+                  </div>
+                </div>
+              );
+            })()}
             <Field label="Reason / Reference"><input type="text" style={iStyle} placeholder="e.g. PO-045" value={stock.reason} onChange={e=>setStock({...stock,reason:e.target.value})}/></Field>
             {sel&&stock.qty&&prev!==null&&(
               <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1022,6 +1088,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const sd=aggregateSalesByMonth(sales);
   const [confirm,setConfirm]=useState(null); const [toast,setToast]=useState(null);
   const [filter,setFilter]=useState("all");
+  const [customDate,setCustomDate]=useState(todayStr());
   const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete=userRole==="manager"||userRole==="admin";
 
@@ -1038,6 +1105,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
     if(filter==="today"){return d.toDateString()===now.toDateString();}
     if(filter==="week"){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
     if(filter==="month"){return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
+    if(filter==="custom"){return String(s.date)===customDate;}
     return true;
   });
 
@@ -1058,7 +1126,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
-      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]}/>
+      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]} customDate={customDate} onCustomDate={d=>{setCustomDate(d);setFilter("custom");}}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:22}}>
         <KpiCard label="Revenue"      value={fmtFull(totalRevenue)}  sub="Total sales" trend="up" color={C.green}/>
         {canSeeCost(userRole)&&<KpiCard label="COGS" value={fmtFull(totalCOGS)} sub="Cost of goods" color={C.red}/>}
@@ -1111,6 +1179,7 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
   const catTotal=cat=>expenses.filter(e=>(["Operations","Marketing","Payroll"].includes(e.category)?e.category:"Other")===cat).reduce((s,e)=>s+e.amount,0);
   const [confirm,setConfirm]=useState(null); const [toast,setToast]=useState(null);
   const [filter,setFilter]=useState("all");
+  const [customDate,setCustomDate]=useState(todayStr());
   const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete=userRole==="manager"||userRole==="admin";
   const now=new Date();
@@ -1121,6 +1190,7 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
     if(filter==="today"){return d.toDateString()===now.toDateString();}
     if(filter==="week"){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
     if(filter==="month"){return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
+    if(filter==="custom"){return String(e.date)===customDate;}
     return true;
   });
 
@@ -1143,9 +1213,9 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete expense: "${confirm.description}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Expenses"/>
-      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]}/>
+      <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]} customDate={customDate} onCustomDate={d=>{setCustomDate(d);setFilter("custom");}}/>
       <div style={{background:C.card,border:`1px solid ${C.red}33`,borderRadius:10,padding:"16px 20px",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Total Expenses {filter!=="all"?`(${filter})`:"(all time)"}</div>
+        <div style={{fontSize:13,fontWeight:700,color:C.muted}}>Total Expenses {filter==="custom"?`(${customDate})`:filter!=="all"?`(${filter})`:""}</div>
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:24,fontWeight:800,color:C.red}}>{fmtFull(filteredExpenses.reduce((s,e)=>s+e.amount,0))}</div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:22}}>
@@ -1186,8 +1256,14 @@ const Expenses = ({expenses, bizId, userRole, onRefresh}) => {
 const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
   const [confirm,setConfirm]=useState(null); const [toast,setToast]=useState(null);
   const [movements,setMovements]=useState([]); const [movFilter,setMovFilter]=useState("all");
+  const [priceEdit,setPriceEdit]=useState(null);
+  const [priceLoading,setPriceLoading]=useState(false);
+  const [showBulk,setShowBulk]=useState(false);
+  const [bulkPrices,setBulkPrices]=useState({}); // {sku: newPrice}
+  const [bulkLoading,setBulkLoading]=useState(false);
   const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
   const canDelete=userRole==="admin";
+  const canEdit=canSeeCost(userRole);
 
   useEffect(()=>{apiGet(`/businesses/${bizId}/stock-movements`).then(setMovements).catch(()=>{});},[bizId]);
 
@@ -1195,6 +1271,38 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
     try{await apiDelete(`/businesses/${bizId}/inventory/${sku}`);showToast("✓ Product deleted");onRefresh();}
     catch(e){showToast(`✕ ${e.message}`,C.red);}
     setConfirm(null);
+  };
+
+  const savePrice=async()=>{
+    if(!priceEdit||priceEdit.unit_cost===""||priceEdit.unit_cost<0) return showToast("Enter a valid price",C.red);
+    setPriceLoading(true);
+    try{
+      await apiPatch(`/businesses/${bizId}/inventory/${priceEdit.sku}/price`,{
+        unit_cost:Number(priceEdit.unit_cost),
+        reorder:Number(priceEdit.reorder)||undefined,
+        name:priceEdit.name||undefined,
+      });
+      showToast(`✓ ${priceEdit.sku} price updated to ${fmtFull(Number(priceEdit.unit_cost))}`);
+      setPriceEdit(null);
+      onRefresh();
+    }catch(e){showToast(`✕ ${e.message}`,C.red);}
+    setPriceLoading(false);
+  };
+
+  const saveBulk=async()=>{
+    const items=Object.entries(bulkPrices)
+      .filter(([,v])=>v!==""&&Number(v)>=0)
+      .map(([sku,unit_cost])=>({sku,unit_cost:Number(unit_cost)}));
+    if(items.length===0) return showToast("Enter at least one new price",C.red);
+    setBulkLoading(true);
+    try{
+      const res=await apiPatch(`/businesses/${bizId}/inventory/bulk-price`,{items});
+      showToast(`✓ ${res.count} product${res.count!==1?"s":""} updated`);
+      setBulkPrices({});
+      setShowBulk(false);
+      onRefresh();
+    }catch(e){showToast(`✕ ${e.message}`,C.red);}
+    setBulkLoading(false);
   };
 
   const now=new Date();
@@ -1213,7 +1321,87 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
       {confirm&&<ConfirmDelete message={`Delete "${confirm.name}" (${confirm.sku})? Cannot be undone.`} onConfirm={()=>doDelete(confirm.sku)} onCancel={()=>setConfirm(null)}/>}
+
+      {/* Price Edit Modal */}
+      {priceEdit&&(
+        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:14,padding:28,width:"100%",maxWidth:380}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Adjust Product Details</div>
+            <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:20}}>
+              {priceEdit.sku} — current cost: <span style={{color:C.accent,fontFamily:"'DM Mono',monospace"}}>{fmtFull(priceEdit.originalCost)}</span>
+            </div>
+            <Field label="Product Name">
+              <input type="text" style={iStyle} value={priceEdit.name} onChange={e=>setPriceEdit({...priceEdit,name:e.target.value})}/>
+            </Field>
+            <Field label="New Unit Cost (buying price)">
+              <input type="number" style={iStyle} value={priceEdit.unit_cost} onChange={e=>setPriceEdit({...priceEdit,unit_cost:e.target.value})}/>
+            </Field>
+            <Field label="Reorder Point">
+              <input type="number" style={iStyle} value={priceEdit.reorder} onChange={e=>setPriceEdit({...priceEdit,reorder:e.target.value})}/>
+            </Field>
+            {priceEdit.unit_cost&&Number(priceEdit.unit_cost)!==priceEdit.originalCost&&(
+              <div style={{background:C.accentDim,border:`1px solid ${C.accent}33`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontWeight:600,color:C.accent}}>
+                ⚠ Cost will change from {fmtFull(priceEdit.originalCost)} → {fmtFull(Number(priceEdit.unit_cost))}<br/>
+                <span style={{color:C.muted,fontWeight:500}}>Past sale COGS are unaffected. Future sales will use the new cost.</span>
+              </div>
+            )}
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={savePrice} disabled={priceLoading} style={{flex:1,padding:"12px",borderRadius:8,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {priceLoading?<><Spinner size={14}/> Saving…</>:"💾 Save Changes"}
+              </button>
+              <button onClick={()=>setPriceEdit(null)} style={{flex:1,padding:"12px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SectionHeader title="Inventory & Stock"/>
+
+      {/* Bulk Price Update Modal */}
+      {showBulk&&canEdit&&(
+        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.card,border:`1px solid ${C.blue}`,borderRadius:14,padding:28,width:"100%",maxWidth:540,maxHeight:"88vh",overflowY:"auto"}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Bulk Price Update</div>
+            <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:20}}>Update unit costs for multiple products at once. Leave blank to keep current price.</div>
+            <div style={{display:"grid",gap:8,marginBottom:20}}>
+              {inventory.map(item=>(
+                <div key={item.sku} style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,alignItems:"center",padding:"10px 14px",background:C.surface,borderRadius:9}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{item.name}</div>
+                    <div style={{fontSize:11,fontWeight:600,color:C.muted,marginTop:2,fontFamily:"'DM Mono',monospace"}}>
+                      {item.sku} · current: <span style={{color:C.accent}}>{fmtFull(item.unit_cost)}</span>
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    placeholder={`${fmtFull(item.unit_cost)}`}
+                    value={bulkPrices[item.sku]||""}
+                    onChange={e=>setBulkPrices({...bulkPrices,[item.sku]:e.target.value})}
+                    style={{...iStyle,fontSize:13,textAlign:"right",
+                      border:`1px solid ${bulkPrices[item.sku]?C.blue:C.border}`,
+                      color:bulkPrices[item.sku]?C.blue:C.muted,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{background:C.surface,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:12,fontWeight:600,color:C.muted}}>
+              {Object.values(bulkPrices).filter(v=>v!=="").length} of {inventory.length} products will be updated
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={saveBulk} disabled={bulkLoading} style={{flex:1,padding:"12px",borderRadius:8,border:"none",background:C.blue,color:"#000",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {bulkLoading?<><Spinner size={14}/> Saving…</>:"💾 Apply All Changes"}
+              </button>
+              <button onClick={()=>{setShowBulk(false);setBulkPrices({});}} style={{flex:1,padding:"12px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {canEdit&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:C.blue+"11",border:`1px solid ${C.blue}33`,borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+        <span style={{fontSize:12,fontWeight:600,color:C.blue}}>💡 Click <strong>✎ Edit</strong> on a product to adjust price, reorder point or name.</span>
+        <button onClick={()=>setShowBulk(true)} style={{fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:6,border:`1px solid ${C.blue}`,background:C.blue+"22",color:C.blue,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",whiteSpace:"nowrap"}}>⚡ Bulk Update Prices</button>
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:22}}>
         <KpiCard label="SKUs"         value={inventory.length} sub="Products" color={C.blue}/>
         {canSeeCost(userRole)&&<KpiCard label="Total Value" value={fmtFull(inventory.reduce((s,i)=>s+i.stock*i.unit_cost,0))} sub="At cost" color={C.green}/>}
@@ -1224,7 +1412,7 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
         {canDelete&&<div style={{padding:"8px 16px",background:C.red+"0a",borderBottom:`1px solid ${C.border}`,fontSize:12,fontWeight:600,color:C.muted}}>Admins can delete products using ✕</div>}
         <div style={{overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:420}}>
-            <thead><tr style={{background:C.surface}}>{["SKU","Product","Stock","Reorder",...(canSeeCost(userRole)?["Unit Cost","Value"]:[]),"Status",...(canDelete?[""]:[])].map(h=><th key={h} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:11,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+            <thead><tr style={{background:C.surface}}>{["SKU","Product","Stock","Reorder",...(canSeeCost(userRole)?["Unit Cost","Value"]:[]),"Status",...(canEdit?["✎"]:[]),...(canDelete?["✕"]:[])].map(h=><th key={h} style={{padding:"12px 14px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:11,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
             <tbody>
               {inventory.map(item=>(
                 <tr key={item.id} style={{borderTop:`1px solid ${C.border}`}}>
@@ -1235,6 +1423,10 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
                   {canSeeCost(userRole)&&<td style={{padding:"12px 14px",color:C.muted,fontFamily:"'DM Mono',monospace"}}>{fmtFull(item.unit_cost)}</td>}
                   {canSeeCost(userRole)&&<td style={{padding:"12px 14px",color:C.green,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{fmtFull(item.stock*item.unit_cost)}</td>}
                   <td style={{padding:"12px 14px"}}><Badge status={item.status}/></td>
+                  {canEdit&&<td style={{padding:"12px 14px"}}>
+                    <button onClick={()=>setPriceEdit({sku:item.sku,name:item.name,unit_cost:item.unit_cost,reorder:item.reorder,originalCost:item.unit_cost})}
+                      style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:5,border:`1px solid ${C.accent}44`,background:C.accentDim,color:C.accent,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>✎ Edit</button>
+                  </td>}
                   {canDelete&&<td style={{padding:"12px 14px"}}><DelBtn onClick={()=>setConfirm(item)}/></td>}
                 </tr>
               ))}
