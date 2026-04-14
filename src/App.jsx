@@ -1900,7 +1900,7 @@ function initOneSignal(user) {
   } catch(e) { /* DOM manipulation failed — non-fatal */ }
 }
 
-export default function BizMonitor() {
+function BizMonitor() {
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
   const [businesses,setBusinesses]=useState([]); const [activeBiz,setActiveBiz]=useState(null);
   const [businessesLoaded,setBusinessesLoaded]=useState(false);
