@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, Component } from "react";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -64,6 +64,12 @@ const css = `
   ::-webkit-scrollbar-track{background:transparent}
   ::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
   .bm-page{animation:fadeIn 0.2s ease}
+  /* Safari iOS fixes */
+  html{height:-webkit-fill-available}
+  body{min-height:-webkit-fill-available;-webkit-text-size-adjust:100%}
+  input,select,textarea{-webkit-appearance:none;border-radius:8px}
+  button{-webkit-appearance:none;cursor:pointer}
+  *{-webkit-overflow-scrolling:touch}
 `;
 
 const iStyle = {
@@ -133,7 +139,7 @@ const Toast = ({msg,color}) => (
 );
 
 const LoadingScreen = () => (
-  <div style={{position:"fixed",inset:0,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9998,gap:28}}>
+  <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:9998,gap:28,paddingBottom:"env(safe-area-inset-bottom)"}}>
     {/* BizMonitor logo mark */}
     <div style={{width:56,height:56,background:C.accent,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:800,color:"#000",boxShadow:`0 0 32px ${C.accent}44`}}>B</div>
     {/* Pulsing dots */}
@@ -187,7 +193,7 @@ const PeriodFilter = ({value, onChange, options=[["all","All Time"],["year","Thi
 );
 
 const ConfirmDelete = ({message,onConfirm,onCancel}) => (
-  <div style={{position:"fixed",inset:0,background:"#000b",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+  <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,background:"#000b",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
     <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:12,padding:28,width:"100%",maxWidth:360,boxShadow:`0 8px 40px ${C.red}33`}}>
       <div style={{fontSize:20,marginBottom:10}}>⚠️</div>
       <div style={{fontWeight:800,color:C.text,fontSize:16,marginBottom:10}}>Confirm Delete</div>
@@ -693,7 +699,7 @@ const DataEntry = ({inventory, onRefresh, bizId, apiStatus, recentSales, recentE
 
       {/* Edit Entry Modal */}
       {editEntry&&(
-        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:14,padding:28,width:"100%",maxWidth:420,maxHeight:"90vh",overflowY:"auto"}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Edit {editEntry.type==="sale"?"Sale":"Expense"}</div>
             <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:20}}>
@@ -1332,7 +1338,7 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
 
       {/* Price Edit Modal */}
       {priceEdit&&(
-        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:14,padding:28,width:"100%",maxWidth:380}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Adjust Product Details</div>
             <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:20}}>
@@ -1367,7 +1373,7 @@ const Inventory = ({inventory, bizId, userRole, onRefresh}) => {
 
       {/* Bulk Price Update Modal */}
       {showBulk&&canEdit&&(
-        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,background:"#000c",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:C.card,border:`1px solid ${C.blue}`,borderRadius:14,padding:28,width:"100%",maxWidth:540,maxHeight:"88vh",overflowY:"auto"}}>
             <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Bulk Price Update</div>
             <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:20}}>Update unit costs for multiple products at once. Leave blank to keep current price.</div>
@@ -1856,33 +1862,42 @@ const Reports = ({sales, expenses, balances, userRole}) => {
 // ── Main App ──────────────────────────────────────────────────────────────────
 const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || "";
 
-// Initialize OneSignal web push — called once after user logs in
+// Initialize OneSignal — fully wrapped so any failure is silent and never crashes the app
 function initOneSignal(user) {
-  if (!ONESIGNAL_APP_ID || typeof window === "undefined") return;
+  if (!ONESIGNAL_APP_ID) return;
+  if (typeof window === "undefined") return;
   if (window.__onesignal_initialized) return;
   window.__onesignal_initialized = true;
 
-  // Load OneSignal SDK dynamically
-  const script = document.createElement("script");
-  script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-  script.defer = true;
-  script.onload = () => {
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async (OneSignal) => {
-      await OneSignal.init({
-        appId:                    ONESIGNAL_APP_ID,
-        notifyButton:             { enable: false }, // we use our own UI
-        allowLocalhostAsSecureOrigin: true,
-      });
-      // Tag user so we can target by role later
-      await OneSignal.User.addTags({
-        user_id:   String(user.id),
-        role:      user.role,
-        full_name: user.full_name,
-      });
-    });
-  };
-  document.head.appendChild(script);
+  try {
+    const script = document.createElement("script");
+    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+    script.defer = true;
+    script.onerror = () => {
+      // Script blocked (DuckDuckGo, content blockers) — fail silently
+      window.__onesignal_initialized = false;
+    };
+    script.onload = () => {
+      try {
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        window.OneSignalDeferred.push(async (OneSignal) => {
+          try {
+            await OneSignal.init({
+              appId: ONESIGNAL_APP_ID,
+              notifyButton: { enable: false },
+              allowLocalhostAsSecureOrigin: true,
+            });
+            await OneSignal.User.addTags({
+              user_id:   String(user.id),
+              role:      user.role,
+              full_name: user.full_name,
+            });
+          } catch(e) { /* OneSignal init failed — non-fatal */ }
+        });
+      } catch(e) { /* script load handler failed — non-fatal */ }
+    };
+    document.head.appendChild(script);
+  } catch(e) { /* DOM manipulation failed — non-fatal */ }
 }
 
 export default function BizMonitor() {
@@ -1907,7 +1922,8 @@ export default function BizMonitor() {
   useEffect(()=>{
     if(user && ONESIGNAL_APP_ID){
       initOneSignal(user);
-      setNotifPermission(Notification?.permission || null);
+      try{ setNotifPermission(Notification?.permission || null); }
+      catch(e){ setNotifPermission(null); } // Safari may not support Notification API
     }
   },[user]);
 
@@ -2048,10 +2064,13 @@ export default function BizMonitor() {
             <button onClick={async()=>{
               setNotifPermission("asking");
               try{
-                window.OneSignalDeferred=window.OneSignalDeferred||[];
+                if(!window.OneSignalDeferred){ setNotifPermission("denied"); return; }
                 window.OneSignalDeferred.push(async(OneSignal)=>{
-                  await OneSignal.Notifications.requestPermission();
-                  setNotifPermission(Notification?.permission||"granted");
+                  try{
+                    await OneSignal.Notifications.requestPermission();
+                    try{setNotifPermission(Notification?.permission||"granted");}
+                    catch(e){setNotifPermission("granted");}
+                  }catch(e){ setNotifPermission("denied"); }
                 });
               }catch(e){ setNotifPermission("denied"); }
             }} style={{width:"100%",padding:"6px",borderRadius:6,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>
@@ -2086,6 +2105,10 @@ export default function BizMonitor() {
 
   return (
     <div style={{display:"flex",height:"100vh",background:C.bg,color:C.text,fontFamily:"'IBM Plex Sans',system-ui,sans-serif",fontSize:14,overflow:"hidden"}}>
+      <style>{`
+        html, body { height: 100%; height: -webkit-fill-available; }
+        .bm-root { height: 100vh; height: -webkit-fill-available; }
+      `}</style>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{css}</style>
 
@@ -2097,8 +2120,8 @@ export default function BizMonitor() {
 
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen&&(
-        <div style={{position:"fixed",inset:0,zIndex:1000,display:"flex"}}>
-          <div onClick={()=>setSidebarOpen(false)} style={{position:"absolute",inset:0,background:"#000a"}}/>
+        <div style={{position:"fixed",top:0,right:0,bottom:0,left:0,zIndex:1000,display:"flex"}}>
+          <div onClick={()=>setSidebarOpen(false)} style={{position:"absolute",top:0,right:0,bottom:0,left:0,background:"#000a"}}/>
           <div style={{position:"relative",width:260,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",zIndex:1}}>
             <Sidebar/>
           </div>
@@ -2135,3 +2158,34 @@ export default function BizMonitor() {
     </div>
   );
 }
+
+// ── Error Boundary ─────────────────────────────────────────────────────────────
+// Catches any unhandled JS crash and shows a readable message
+// instead of a white screen on Safari/DuckDuckGo
+class AppErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error("BizMonitor crash:", e, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{minHeight:"100vh",background:"#0a0c10",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"system-ui,sans-serif",color:"#e6edf3"}}>
+        <div style={{fontSize:36,marginBottom:16}}>⚠️</div>
+        <div style={{fontSize:20,fontWeight:700,marginBottom:8}}>Something went wrong</div>
+        <div style={{fontSize:13,color:"#7d8590",marginBottom:24,textAlign:"center",maxWidth:320,lineHeight:1.6}}>
+          BizMonitor encountered an error. Please reload the page.
+          {this.state.error?.message && <div style={{marginTop:12,fontFamily:"monospace",fontSize:11,background:"#161b22",padding:"8px 12px",borderRadius:6,color:"#f85149"}}>{this.state.error.message}</div>}
+        </div>
+        <button onClick={()=>window.location.reload()} style={{padding:"12px 28px",borderRadius:8,border:"none",background:"#f0a500",color:"#000",fontWeight:800,fontSize:15,cursor:"pointer"}}>
+          Reload App
+        </button>
+      </div>
+    );
+  }
+}
+
+// Wrap the default export with the error boundary
+const BizMonitorSafe = (props) => (
+  <AppErrorBoundary><BizMonitor {...props}/></AppErrorBoundary>
+);
+export { BizMonitorSafe as default };
