@@ -1093,7 +1093,15 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   const canDelete=userRole==="manager"||userRole==="admin";
 
   const doDelete=async(id)=>{
-    try{await apiDelete(`/businesses/${bizId}/sales/${id}`);showToast("✓ Sale deleted");onRefresh();}
+    try{
+      const res = await apiDelete(`/businesses/${bizId}/sales/${id}`);
+      if(res.restored_sku && res.units_back > 0){
+        showToast(`✓ Sale deleted · ${res.units_back} units restored to ${res.restored_sku}`);
+      } else {
+        showToast("✓ Sale deleted");
+      }
+      onRefresh();
+    }
     catch(e){showToast(`✕ ${e.message}`,C.red);}
     setConfirm(null);
   };
@@ -1124,7 +1132,7 @@ const Sales = ({sales, bizId, userRole, onRefresh}) => {
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
-      {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
+      {confirm&&<ConfirmDelete message={`Delete sale: "${confirm.product}" — ${fmtFull(confirm.amount)}?\n${confirm.sku ? `✓ ${confirm.units} units will be restored to inventory (${confirm.sku}).` : "This sale has no linked SKU — inventory will not change."}`} onConfirm={()=>doDelete(confirm.id)} onCancel={()=>setConfirm(null)}/>}
       <SectionHeader title="Sales & Revenue"/>
       <PeriodFilter value={filter} onChange={setFilter} options={[["all","All Time"],["month","This Month"],["week","This Week"],["today","Today"]]} customDate={customDate} onCustomDate={d=>{setCustomDate(d);setFilter("custom");}}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:22}}>
@@ -1846,6 +1854,37 @@ const Reports = ({sales, expenses, balances, userRole}) => {
 };
 
 // ── Main App ──────────────────────────────────────────────────────────────────
+const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || "";
+
+// Initialize OneSignal web push — called once after user logs in
+function initOneSignal(user) {
+  if (!ONESIGNAL_APP_ID || typeof window === "undefined") return;
+  if (window.__onesignal_initialized) return;
+  window.__onesignal_initialized = true;
+
+  // Load OneSignal SDK dynamically
+  const script = document.createElement("script");
+  script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+  script.defer = true;
+  script.onload = () => {
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      await OneSignal.init({
+        appId:                    ONESIGNAL_APP_ID,
+        notifyButton:             { enable: false }, // we use our own UI
+        allowLocalhostAsSecureOrigin: true,
+      });
+      // Tag user so we can target by role later
+      await OneSignal.User.addTags({
+        user_id:   String(user.id),
+        role:      user.role,
+        full_name: user.full_name,
+      });
+    });
+  };
+  document.head.appendChild(script);
+}
+
 export default function BizMonitor() {
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
   const [businesses,setBusinesses]=useState([]); const [activeBiz,setActiveBiz]=useState(null);
@@ -1856,12 +1895,21 @@ export default function BizMonitor() {
   const [cashBalances,setCashBalances]=useState([]);
   const [apiStatus,setApiStatus]=useState("loading"); const [lastRefresh,setLastRefresh]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [notifPermission,setNotifPermission]=useState(null); // null|"granted"|"denied"|"asking"
 
   useEffect(()=>{
     const token=getToken();
     if(token){apiGet("/auth/me").then(u=>{setUser(u);setAuthChecked(true);}).catch(()=>{clearToken();setAuthChecked(true);});}
     else setAuthChecked(true);
   },[]);
+
+  // Initialize OneSignal when user logs in
+  useEffect(()=>{
+    if(user && ONESIGNAL_APP_ID){
+      initOneSignal(user);
+      setNotifPermission(Notification?.permission || null);
+    }
+  },[user]);
 
   useEffect(()=>{
     if(user){
@@ -1991,6 +2039,35 @@ export default function BizMonitor() {
       <div style={{padding:"14px 16px",borderTop:`1px solid ${C.border}`}}>
         <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:2}}>{user.full_name}</div>
         <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:10,textTransform:"capitalize"}}>{user.role}{user.department?` · ${user.department}`:""}</div>
+
+        {/* Notification permission prompt — only show if not yet decided */}
+        {ONESIGNAL_APP_ID && notifPermission !== "granted" && notifPermission !== "denied" && (
+          <div style={{background:C.accent+"18",border:`1px solid ${C.accent}44`,borderRadius:8,padding:"8px 10px",marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.accent,marginBottom:4}}>🔔 Enable Notifications</div>
+            <div style={{fontSize:10,fontWeight:500,color:C.muted,marginBottom:7,lineHeight:1.5}}>Get alerts for sales, expenses and low stock.</div>
+            <button onClick={async()=>{
+              setNotifPermission("asking");
+              try{
+                window.OneSignalDeferred=window.OneSignalDeferred||[];
+                window.OneSignalDeferred.push(async(OneSignal)=>{
+                  await OneSignal.Notifications.requestPermission();
+                  setNotifPermission(Notification?.permission||"granted");
+                });
+              }catch(e){ setNotifPermission("denied"); }
+            }} style={{width:"100%",padding:"6px",borderRadius:6,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>
+              {notifPermission==="asking"?"Requesting…":"Allow Notifications"}
+            </button>
+          </div>
+        )}
+
+        {/* Notification granted confirmation */}
+        {notifPermission==="granted"&&(
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            <span style={{fontSize:12}}>🔔</span>
+            <span style={{fontSize:11,fontWeight:600,color:C.green}}>Notifications enabled</span>
+          </div>
+        )}
+
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
           {apiStatus==="loading"?<Spinner size={12}/>:<span style={{color:apiStatus==="ok"?C.green:C.red,fontSize:12}}>●</span>}
           <span style={{fontSize:12,fontWeight:600,color:apiStatus==="ok"?C.green:apiStatus==="error"?C.red:C.muted}}>
