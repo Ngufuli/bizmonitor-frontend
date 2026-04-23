@@ -1931,46 +1931,6 @@ const Reports = ({sales, expenses, balances, userRole, bizId}) => {
 };
 
 // ── Main App ──────────────────────────────────────────────────────────────────
-const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || "";
-
-// Initialize OneSignal — fully wrapped so any failure is silent and never crashes the app
-function initOneSignal(user) {
-  if (!ONESIGNAL_APP_ID) return;
-  if (typeof window === "undefined") return;
-  if (window.__onesignal_initialized) return;
-  window.__onesignal_initialized = true;
-
-  try {
-    const script = document.createElement("script");
-    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-    script.defer = true;
-    script.onerror = () => {
-      // Script blocked (DuckDuckGo, content blockers) — fail silently
-      window.__onesignal_initialized = false;
-    };
-    script.onload = () => {
-      try {
-        window.OneSignalDeferred = window.OneSignalDeferred || [];
-        window.OneSignalDeferred.push(async (OneSignal) => {
-          try {
-            await OneSignal.init({
-              appId: ONESIGNAL_APP_ID,
-              notifyButton: { enable: false },
-              allowLocalhostAsSecureOrigin: true,
-            });
-            await OneSignal.User.addTags({
-              user_id:   String(user.id),
-              role:      user.role,
-              full_name: user.full_name,
-            });
-          } catch(e) { /* OneSignal init failed — non-fatal */ }
-        });
-      } catch(e) { /* script load handler failed — non-fatal */ }
-    };
-    document.head.appendChild(script);
-  } catch(e) { /* DOM manipulation failed — non-fatal */ }
-}
-
 function BizMonitor() {
   const [user,setUser]=useState(null); const [authChecked,setAuthChecked]=useState(false);
   const [businesses,setBusinesses]=useState([]); const [activeBiz,setActiveBiz]=useState(null);
@@ -1981,22 +1941,12 @@ function BizMonitor() {
   const [cashBalances,setCashBalances]=useState([]);
   const [apiStatus,setApiStatus]=useState("loading"); const [lastRefresh,setLastRefresh]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
-  const [notifPermission,setNotifPermission]=useState(null); // null|"granted"|"denied"|"asking"
 
   useEffect(()=>{
     const token=getToken();
     if(token){apiGet("/auth/me").then(u=>{setUser(u);setAuthChecked(true);}).catch(()=>{clearToken();setAuthChecked(true);});}
     else setAuthChecked(true);
   },[]);
-
-  // Initialize OneSignal when user logs in
-  useEffect(()=>{
-    if(user && ONESIGNAL_APP_ID){
-      initOneSignal(user);
-      try{ setNotifPermission(Notification?.permission || null); }
-      catch(e){ setNotifPermission(null); } // Safari may not support Notification API
-    }
-  },[user]);
 
   useEffect(()=>{
     if(user){
@@ -2139,37 +2089,6 @@ function BizMonitor() {
       <div style={{padding:"14px 16px",borderTop:`1px solid ${C.border}`}}>
         <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:2}}>{user.full_name}</div>
         <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:10,textTransform:"capitalize"}}>{user.role}{user.department?` · ${user.department}`:""}</div>
-
-        {/* Notification permission prompt — only show if not yet decided */}
-        {ONESIGNAL_APP_ID && notifPermission !== "granted" && notifPermission !== "denied" && (
-          <div style={{background:C.accent+"18",border:`1px solid ${C.accent}44`,borderRadius:8,padding:"8px 10px",marginBottom:10}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.accent,marginBottom:4}}>🔔 Enable Notifications</div>
-            <div style={{fontSize:10,fontWeight:500,color:C.muted,marginBottom:7,lineHeight:1.5}}>Get alerts for sales, expenses and low stock.</div>
-            <button onClick={async()=>{
-              setNotifPermission("asking");
-              try{
-                if(!window.OneSignalDeferred){ setNotifPermission("denied"); return; }
-                window.OneSignalDeferred.push(async(OneSignal)=>{
-                  try{
-                    await OneSignal.Notifications.requestPermission();
-                    try{setNotifPermission(Notification?.permission||"granted");}
-                    catch(e){setNotifPermission("granted");}
-                  }catch(e){ setNotifPermission("denied"); }
-                });
-              }catch(e){ setNotifPermission("denied"); }
-            }} style={{width:"100%",padding:"6px",borderRadius:6,border:"none",background:C.accent,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>
-              {notifPermission==="asking"?"Requesting…":"Allow Notifications"}
-            </button>
-          </div>
-        )}
-
-        {/* Notification granted confirmation */}
-        {notifPermission==="granted"&&(
-          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
-            <span style={{fontSize:12}}>🔔</span>
-            <span style={{fontSize:11,fontWeight:600,color:C.green}}>Notifications enabled</span>
-          </div>
-        )}
 
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
           {apiStatus==="loading"?<Spinner size={12}/>:<span style={{color:apiStatus==="ok"?C.green:C.red,fontSize:12}}>●</span>}
