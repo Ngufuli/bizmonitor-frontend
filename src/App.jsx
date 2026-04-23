@@ -325,9 +325,23 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
     catch(e){showToast(e.message,C.red);}
   };
 
+  const deactivateBusiness=async(id)=>{
+    try{
+      await apiPatch(`/businesses/${id}`,{is_active:false});
+      showToast("✓ Business deactivated");
+      const updated=await apiGet("/businesses");
+      onBusinessCreated(updated);
+    }catch(e){showToast(e.message,C.red);}
+    setConfirmBiz(null);
+  };
+
   const deleteBusiness=async(id)=>{
-    try{await apiPatch(`/businesses/${id}`,{is_active:false});showToast("✓ Business deactivated");onBusinessCreated(null);}
-    catch(e){showToast(e.message,C.red);}
+    try{
+      await apiDelete(`/businesses/${id}`);
+      showToast("✓ Business permanently deleted");
+      const updated=await apiGet("/businesses");
+      onBusinessCreated(updated);
+    }catch(e){showToast(e.message,C.red);}
     setConfirmBiz(null);
   };
 
@@ -356,7 +370,26 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
   return (
     <div>
       {toast&&<Toast msg={toast.msg} color={toast.color}/>}
-      {confirmBiz&&<ConfirmDelete message={`Deactivate "${confirmBiz.name}"? Data is preserved.`} onConfirm={()=>deleteBusiness(confirmBiz.id)} onCancel={()=>setConfirmBiz(null)}/>}
+      {confirmBiz&&(
+        <div style={{position:"fixed",inset:0,background:"#000b",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:28,width:"100%",maxWidth:380}}>
+            <div style={{fontSize:20,marginBottom:10}}>🏢</div>
+            <div style={{fontWeight:800,color:C.text,fontSize:16,marginBottom:8}}>{confirmBiz.name}</div>
+            <div style={{color:C.muted,fontSize:13,fontWeight:500,marginBottom:20,lineHeight:1.6}}>Choose what to do with this business:</div>
+            <div style={{display:"grid",gap:10}}>
+              <button onClick={()=>deactivateBusiness(confirmBiz.id)} style={{padding:"12px",borderRadius:8,border:`1px solid ${C.accent}`,background:C.accentDim,color:C.accent,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",textAlign:"left"}}>
+                <div style={{fontWeight:800}}>⏸ Deactivate</div>
+                <div style={{fontSize:11,fontWeight:500,marginTop:3,opacity:0.8}}>Hides from menu. All data is preserved. Can be reactivated.</div>
+              </button>
+              <button onClick={()=>deleteBusiness(confirmBiz.id)} style={{padding:"12px",borderRadius:8,border:`1px solid ${C.red}`,background:C.red+"15",color:C.red,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",textAlign:"left"}}>
+                <div style={{fontWeight:800}}>🗑 Permanently Delete</div>
+                <div style={{fontSize:11,fontWeight:500,marginTop:3,opacity:0.8}}>Removes all data — sales, expenses, inventory. Cannot be undone.</div>
+              </button>
+              <button onClick={()=>setConfirmBiz(null)} style={{padding:"11px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmMember&&<ConfirmDelete message={`Remove ${confirmMember.name} from ${selectedBiz?.name}?`} onConfirm={()=>removeMember(confirmMember.userId)} onCancel={()=>setConfirmMember(null)}/>}
       <SectionHeader title="Admin Panel" subtitle="Manage users, businesses and view activity"/>
       <div style={{display:"flex",gap:8,marginBottom:24,flexWrap:"wrap"}}>
@@ -2007,7 +2040,11 @@ function BizMonitor() {
   const sortByDate=arr=>[...arr].sort((a,b)=>new Date(b.created_at||b.date)-new Date(a.created_at||a.date));
 
   const pageMap={
-    admin:    <AdminPanel user={user} businesses={businesses} onBusinessCreated={b=>{if(b)setBusinesses(p=>[...p,b]);else apiGet("/businesses").then(setBusinesses).catch(()=>{});}}/>,
+    admin:    <AdminPanel user={user} businesses={businesses} onBusinessCreated={b=>{
+      if(Array.isArray(b)) setBusinesses(b);           // full refresh after delete/deactivate
+      else if(b) setBusinesses(p=>[...p,b]);           // new business created
+      else apiGet("/businesses").then(setBusinesses).catch(()=>{});
+    }}/>,
     entry:    <DataEntry inventory={inventory} onRefresh={loadBizData} bizId={activeBiz?.id} apiStatus={apiStatus} userRole={role} recentSales={sortByDate(sales).slice(0,8)} recentExpenses={sortByDate(expenses).slice(0,8)}/>,
     overview: <Overview  sales={sales} expenses={expenses} inventory={inventory} userRole={role}/>,
     sales:    <Sales     sales={sortByDate(sales)} bizId={activeBiz?.id} userRole={role} onRefresh={loadBizData}/>,
