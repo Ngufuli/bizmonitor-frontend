@@ -1576,8 +1576,12 @@ const CashPage = ({bizId, userRole}) => {
   const [form,setForm]=useState({date:todayStr(),opening_balance:"",closing_balance:"",bank_balance:"",notes:""});
 
   const showToast=(msg,color=C.green)=>{setToast({msg,color});setTimeout(()=>setToast(null),3000);};
-  const load=async()=>{try{setBalances(await apiGet(`/businesses/${bizId}/cash`));}catch(e){showToast(e.message,C.red);}setLoading(false);};
-  useEffect(()=>{load();},[bizId]);
+  const load=async(silent=false)=>{
+    try{setBalances(await apiGet(`/businesses/${bizId}/cash`));}
+    catch(e){if(!silent) showToast(e.message,C.red);}
+    setLoading(false);
+  };
+  useEffect(()=>{load(true);},[bizId]); // silent on auto-load
 
   const submit=async()=>{
     if(!form.opening_balance||!form.closing_balance) return showToast("Enter opening and closing balance",C.red);
@@ -1745,8 +1749,12 @@ const CashPage = ({bizId, userRole}) => {
 };
 
 // ── Reports Page ──────────────────────────────────────────────────────────────
-const Reports = ({sales, expenses, balances, userRole}) => {
+const Reports = ({sales, expenses, balances, userRole, bizId}) => {
   const [period,setPeriod]=useState("month");
+  const [sending,setSending]=useState(false);
+  const [sendResult,setSendResult]=useState(null);
+  const [reportType,setReportType]=useState("daily");
+  const [reportDate,setReportDate]=useState(todayStr());
   const now=new Date();
 
   const filterByDate=items=>{
@@ -1776,9 +1784,72 @@ const Reports = ({sales, expenses, balances, userRole}) => {
 
   const PERIODS=[["today","Today"],["week","This Week"],["month","This Month"],["year","This Year"]];
 
+  const sendReport=async()=>{
+    if(!bizId) return;
+    setSending(true); setSendResult(null);
+    try{
+      const body={report_type:reportType};
+      if(reportType==="daily") body.report_date=reportDate;
+      const res=await apiPost(`/businesses/${bizId}/send-report`,body);
+      setSendResult({ok:true, msg:`✓ ${res.report_type} report sent to ${res.recipients?.length||0} recipient(s)`, preview:res.preview});
+    }catch(e){
+      setSendResult({ok:false, msg:`✕ ${e.message}`});
+    }
+    setSending(false);
+    setTimeout(()=>setSendResult(null),8000);
+  };
+
   return (
     <div>
       <SectionHeader title="Reports" subtitle="Income, expenses and balance summary"/>
+
+      {/* WhatsApp Send Panel */}
+      {canSeeCost(userRole)&&<div style={{background:C.card,border:`1px solid ${C.green}33`,borderRadius:12,padding:20,marginBottom:22}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <div style={{fontSize:22}}>📲</div>
+          <div>
+            <div style={{fontSize:14,fontWeight:800,color:C.text}}>Send WhatsApp Report</div>
+            <div style={{fontSize:12,fontWeight:500,color:C.muted}}>Dispatch a report to your configured WhatsApp group</div>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:14}}>
+          {/* Report type selector */}
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8,letterSpacing:0.5}}>REPORT TYPE</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+              {[["daily","📊 Daily"],["weekly","📅 Weekly"],["inventory","📦 Stock"]].map(([val,label])=>(
+                <button key={val} onClick={()=>setReportType(val)} style={{
+                  padding:"8px 6px",borderRadius:7,border:`1px solid ${reportType===val?C.green:C.border}`,
+                  background:reportType===val?C.green+"18":"transparent",color:reportType===val?C.green:C.muted,
+                  fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",textAlign:"center"
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
+          {/* Date selector for daily */}
+          {reportType==="daily"&&<div>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8,letterSpacing:0.5}}>REPORT DATE</div>
+            <input type="date" style={iStyle} value={reportDate} onChange={e=>setReportDate(e.target.value)}/>
+          </div>}
+        </div>
+        {sendResult&&(
+          <div style={{padding:"10px 14px",borderRadius:8,marginBottom:12,fontSize:13,fontWeight:600,
+            background:sendResult.ok?C.green+"15":C.red+"15",color:sendResult.ok?C.green:C.red,
+            border:`1px solid ${sendResult.ok?C.green:C.red}33`}}>
+            {sendResult.msg}
+            {sendResult.preview&&<div style={{marginTop:8,fontSize:11,fontWeight:500,color:C.muted,fontFamily:"'DM Mono',monospace",whiteSpace:"pre-wrap",maxHeight:120,overflowY:"auto",background:C.surface,borderRadius:6,padding:"8px 10px"}}>{sendResult.preview}</div>}
+          </div>
+        )}
+        <button onClick={sendReport} disabled={sending||!bizId} style={{
+          padding:"12px 24px",borderRadius:9,border:"none",
+          background:sending||!bizId?C.dim:C.green,color:"#000",
+          fontWeight:800,fontSize:14,cursor:sending||!bizId?"not-allowed":"pointer",
+          fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",gap:10
+        }}>
+          {sending?<><Spinner size={16} color="#000"/> Sending…</>:<>📲 Send {reportType.charAt(0).toUpperCase()+reportType.slice(1)} Report via WhatsApp</>}
+        </button>
+      </div>}
+
       <PeriodFilter value={period} onChange={setPeriod} options={PERIODS}/>
 
       {/* Summary cards */}
@@ -1994,7 +2065,7 @@ function BizMonitor() {
     inventory:<Inventory inventory={inventory} bizId={activeBiz?.id} userRole={role} onRefresh={loadBizData}/>,
     pl:       <PL        sales={sales} expenses={expenses} summary={summary} userRole={role}/>,
     cash:     <CashPage  bizId={activeBiz?.id} userRole={role}/>,
-    reports:  <Reports   sales={sales} expenses={expenses} balances={cashBalances} userRole={role}/>,
+    reports:  <Reports   sales={sales} expenses={expenses} balances={cashBalances} userRole={role} bizId={activeBiz?.id}/>,
   };
 
   const NAV_ITEMS=[
@@ -2040,14 +2111,19 @@ function BizMonitor() {
       </div>
       {/* Nav */}
       <nav style={{flex:1,padding:"12px 10px",overflowY:"auto"}}>
-        {isAdmin&&<><div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"0 14px 8px"}}>Admin</div><NavBtn item={NAV_ITEMS.find(n=>n.id==="admin")}/><div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px"}}>Dashboards</div></>}
+        {isAdmin&&(
+          <>
+            <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"0 14px 8px"}}>Admin</div>
+            <NavBtn item={NAV_ITEMS.find(n=>n.id==="admin")}/>
+          </>
+        )}
         {activeBiz&&<>
-          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"0 14px 8px"}}>Data</div>
+          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px 6px"}}>Data</div>
           <NavBtn item={{id:"entry",label:"Data Entry",icon:"✎",color:C.accent}}/>
-          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px"}}>Dashboards</div>
+          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px 6px"}}>Dashboards</div>
           {["overview","sales","expenses","inventory"].map(id=><NavBtn key={id} item={NAV_ITEMS.find(n=>n.id===id)||{id,label:id,icon:"·"}}/>)}
           {role!=="employee"&&<NavBtn item={NAV_ITEMS.find(n=>n.id==="pl")||{id:"pl",label:"P&L",icon:"≋"}}/>}
-          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px"}}>Finance</div>
+          <div style={{fontSize:10,fontWeight:800,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",padding:"8px 14px 6px"}}>Finance</div>
           {["cash","reports"].map(id=><NavBtn key={id} item={NAV_ITEMS.find(n=>n.id===id)||{id,label:id,icon:"·"}}/>)}
         </>}
       </nav>
