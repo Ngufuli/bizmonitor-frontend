@@ -2098,14 +2098,22 @@ function BizMonitor() {
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       {/* Logo */}
       <div style={{padding:"18px 20px",borderBottom:`1px solid ${C.border}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:activeBiz?12:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
           <div style={{width:34,height:34,background:C.accent,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:800,color:"#000",flexShrink:0}}>B</div>
           <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>BizMonitor</div><div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:1}}>ENTERPRISE</div></div>
         </div>
-        {activeBiz&&(
+        {activeBiz?(
           <button onClick={switchBusiness} style={{width:"100%",background:C.accentDim,border:`1px solid ${C.accent}33`,borderRadius:8,padding:"9px 12px",cursor:"pointer",textAlign:"left",fontFamily:"'IBM Plex Sans',sans-serif"}}>
             <div style={{fontSize:13,fontWeight:700,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeBiz.name}</div>
             <div style={{fontSize:11,fontWeight:600,color:C.muted,marginTop:2}}>↩ Switch business</div>
+          </button>
+        ):(
+          <button onClick={()=>{setPage("overview");setSidebarOpen(false);}} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",cursor:"pointer",textAlign:"left",fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:16}}>←</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:C.text}}>Select Business</div>
+              <div style={{fontSize:10,fontWeight:600,color:C.muted,marginTop:1}}>Back to business picker</div>
+            </div>
           </button>
         )}
       </div>
