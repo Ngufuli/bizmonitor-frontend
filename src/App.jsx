@@ -561,7 +561,7 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
                                   </div>
                                 </div>
                                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                  <select value={m.role} onChange={async e=>{try{await apiPost(`/businesses/${selectedBiz.id}/members`,{user_id:m.user_id,role:e.target.value});loadMembers(selectedBiz.id);}catch(err){showToast(err.message,C.red);}}} style={{...iStyle,width:"auto",padding:"4px 8px",fontSize:11,color:roleColor,background:roleColor+"18",border:`1px solid ${roleColor}44`}}>
+                                  <select value={m.role} onChange={async e=>{try{await apiPatch(`/businesses/${selectedBiz.id}/members/${m.user_id}`,{user_id:m.user_id,role:e.target.value});loadMembers(selectedBiz.id);}catch(err){showToast(err.message,C.red);}}} style={{...iStyle,width:"auto",padding:"4px 8px",fontSize:11,color:roleColor,background:roleColor+"18",border:`1px solid ${roleColor}44`}}>
                                     <option value="employee">Employee</option>
                                     <option value="manager">Manager</option>
                                     <option value="admin">Admin</option>
