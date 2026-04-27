@@ -346,24 +346,33 @@ const AdminPanel = ({user, businesses, onBusinessCreated}) => {
   };
 
   const loadMembers=async(bizId)=>{
-    try{setMembers(await apiGet(`/businesses/${bizId}/members`));}catch(e){showToast(e.message,C.red);}
+    try{setMembers(await apiGet(`/businesses/${bizId}/members`));}
+    catch(e){showToast(e.message,C.red);}
   };
 
   const selectBiz=(b)=>{setSelectedBiz(b);loadMembers(b.id);setMemberToAdd({userId:"",role:"employee"});};
 
   const addMember=async()=>{
     if(!memberToAdd.userId) return showToast("Select an employee",C.red);
-    try{await apiPost(`/businesses/${selectedBiz.id}/members`,{user_id:Number(memberToAdd.userId),role:memberToAdd.role});loadMembers(selectedBiz.id);setMemberToAdd({userId:"",role:"employee"});showToast("✓ Employee added");}
-    catch(e){showToast(e.message,C.red);}
+    try{
+      await apiPost(`/businesses/${selectedBiz.id}/members`,{user_id:Number(memberToAdd.userId),role:memberToAdd.role});
+      await loadMembers(selectedBiz.id);
+      setMemberToAdd({userId:"",role:"employee"});
+      showToast("✓ Employee added to "+selectedBiz.name);
+    }catch(e){showToast(`✕ ${e.message}`,C.red);}
   };
 
   const removeMember=async(userId)=>{
-    try{await apiDelete(`/businesses/${selectedBiz.id}/members/${userId}`);loadMembers(selectedBiz.id);showToast("✓ Employee removed");}
-    catch(e){showToast(e.message,C.red);}
+    try{
+      await apiDelete(`/businesses/${selectedBiz.id}/members/${userId}`);
+      loadMembers(selectedBiz.id);
+      showToast("✓ Employee removed");
+    }catch(e){showToast(`✕ ${e.message}`,C.red);}
     setConfirmMember(null);
   };
 
-  const nonMembers=users.filter(u=>!members.some(m=>m.user_id===u.id));
+  // Only exclude users already in THIS business, not other businesses
+  const nonMembers=users.filter(u=>u.is_active&&!members.some(m=>m.user_id===u.id));
   const ROLE_COLORS={admin:C.accent,manager:C.blue,employee:C.muted};
   const TABS=[["users","👥 Users"],["businesses","🏢 Businesses"],["members","🔗 Members"],["activity","📋 Activity"]];
 
